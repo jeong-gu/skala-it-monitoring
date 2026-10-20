@@ -10,6 +10,12 @@ from langsmith import traceable
 
 
 class FakeLLM:
+    def monitoring_json(self, purpose: str, payload: dict, schema: dict):
+        import json
+        from .investigation_models import fake_decision
+        answer = json.dumps(fake_decision(purpose, payload), ensure_ascii=False)
+        return answer, self._usage(str(payload), answer)
+
     def __init__(self, name: str, usd_per_1k_tokens: float):
         self.name = name
         self.usd_per_1k = usd_per_1k_tokens

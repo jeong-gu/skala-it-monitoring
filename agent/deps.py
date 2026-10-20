@@ -15,3 +15,4 @@ class SupervisorDeps:
     mcp: Any             # Wave 2  — MCP stdio 클라이언트 (Tool/Resource/Prompt)
     session_store: Any   # Wave 12 — SQLite 세션 저장소
     version: str         # Wave 14 — SUPERVISOR_VERSION (v1/v2)
+    monitoring_llm: Any = None  # 정보 중심 조사는 별도 계획 모델 주입 가능

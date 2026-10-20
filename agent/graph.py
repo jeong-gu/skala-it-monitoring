@@ -21,7 +21,8 @@ from langsmith import traceable
 
 from .deps import SupervisorDeps
 from .retry import with_retry
-from .command_query import command_query_node, parse_command_query
+from .command_query import command_query_node
+from .investigation import monitoring_request, mentioned_servers
 
 
 def _load_known_systems() -> set[str]:
@@ -67,6 +68,10 @@ class AgentState(TypedDict, total=False):
     last_prompt: str
     cost_usd: float
     events: list[dict]
+    evidence: list[dict]
+    hypotheses: list[dict]
+    limitations: list[str]
+    command_call_count: int
 
 
 def _cost(state: AgentState, usage: dict) -> float:
@@ -76,7 +81,8 @@ def _cost(state: AgentState, usage: dict) -> float:
 @traceable(name="route_node")
 async def route_node(state: AgentState, deps: SupervisorDeps) -> dict:
     """Wave 5 — 모든 쿼리가 무거운 파이프라인을 탈 필요는 없다."""
-    if parse_command_query(state["query"]) is not None:
+    is_legacy = any(s in state["query"] for s in KNOWN_SYSTEMS)
+    if monitoring_request(state["query"]) and (not is_legacy or mentioned_servers(state["query"])):
         return {"route": "commands", "needs_analysis": False,
                 "events": state.get("events", []) + [{"type": "RouteDecided", "route": "commands"}]}
     result, usage = deps.fast_llm.route(state["query"])

@@ -86,12 +86,16 @@ PLAN_SCHEMA = {
 
 
 class OllamaLLM:
+    def monitoring_json(self, purpose: str, payload: dict, schema: dict):
+        from .investigation_models import INSTRUCTIONS
+        return self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), schema=schema, bounded=True)
+
     def __init__(self, model: str, usd_per_1k_tokens: float):
         self.name = f"ollama:{model}"
         self.model = model
         self.usd_per_1k = usd_per_1k_tokens
 
-    def _chat(self, system: str, user: str, schema: dict | None = None) -> tuple[str, dict]:
+    def _chat(self, system: str, user: str, schema: dict | None = None, bounded: bool = False) -> tuple[str, dict]:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system},
@@ -99,6 +103,10 @@ class OllamaLLM:
             "stream": False,
             "options": {"temperature": 0.0},
         }
+        if bounded:
+            payload["think"] = False
+            payload["options"]["num_predict"] = 1200
+            payload["options"]["num_ctx"] = 16384
         if schema is not None:
             payload["format"] = schema
         resp = httpx.post(OLLAMA_URL, json=payload, timeout=300.0)

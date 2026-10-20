@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
     deps = SupervisorDeps(
         fast_llm=fast_llm,
         quality_llm=quality_llm,
+        monitoring_llm=fast_llm if backend == "fake" else quality_llm,
         mcp=mcp,
         session_store=SqliteSessionStore(),
         version=os.environ.get("SUPERVISOR_VERSION", "v2"),
@@ -117,6 +118,7 @@ def _metadata(result: dict, run_id: str | None) -> dict:
         "parallel_elapsed": result.get("parallel_elapsed"),
         "validation_attempts": result.get("validation_attempts", 0),
         "cost_usd": result.get("cost_usd", 0.0),
+        "command_call_count": result.get("command_call_count", 0),
         "llm_backend": app.state.llm_backend,
         "supervisor_version": app.state.deps.version,
         "instance_id": app.state.instance_id,
@@ -144,7 +146,8 @@ async def _handle_chat(message: str, thread_id: str) -> tuple[dict, str | None]:
 async def chat(req: ChatRequest):
     result, run_id = await _handle_chat(req.message, req.thread_id)
     return {"reply": result["final"], "events": result.get("events", []),
-            "metadata": _metadata(result, run_id)}
+            "metadata": _metadata(result, run_id),
+            **{k: result.get(k, []) for k in ("tasks", "evidence", "hypotheses", "limitations")}}
 
 
 @app.get("/chat/stream")
@@ -165,7 +168,9 @@ async def chat_stream(message: str, thread_id: str = "default"):
             yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': result['final']}, ensure_ascii=False)}\n\n"
         else:
             seen = 0
+            seen_event_ids = set()
             final = ""
+            investigation = {k: [] for k in ("tasks", "evidence", "hypotheses", "limitations")}
             last_prompt = None   # finalize까지 살아남은 최종 write/chat 호출의 실제 프롬프트
             # stream_mode를 리스트로 주면 (mode, payload) 튜플이 나온다 — "updates"는
             # 노드가 끝날 때마다의 상태 델타, "custom"은 write_node/chat_answer_node가
@@ -174,10 +179,14 @@ async def chat_stream(message: str, thread_id: str = "default"):
                     {"query": message, "thread_id": thread_id, "history": history,
                      "events": [], "cost_usd": 0.0}, stream_mode=["updates", "custom"]):
                 if mode == "custom":
+                    if payload.get("event_id"):
+                        seen_event_ids.add(payload["event_id"])
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     continue
                 for node_name, delta in payload.items():
                     for ev in (delta.get("events") or [])[seen:]:
+                        if ev.get("event_id") in seen_event_ids:
+                            continue
                         ev = {**ev, "node": node_name}
                         yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
                     if delta.get("events"):
@@ -186,7 +195,10 @@ async def chat_stream(message: str, thread_id: str = "default"):
                         final = delta["final"]
                     if delta.get("last_prompt"):
                         last_prompt = delta["last_prompt"]
-            yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': final, 'prompt': last_prompt}, ensure_ascii=False)}\n\n"
+                    for key in investigation:
+                        if key in delta:
+                            investigation[key] = delta[key]
+            yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': final, 'prompt': last_prompt, **investigation}, ensure_ascii=False)}\n\n"
             deps.session_store.append(thread_id, "user", message)
             deps.session_store.append(thread_id, "assistant", final)
         yield "data: [DONE]\n\n"

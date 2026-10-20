@@ -1,5 +1,4 @@
-"""Explicit command queries use MCP and the local API without an LLM rewrite."""
-import json
+"""Compatibility parser plus entry point to information-first investigations."""
 import re
 
 SERVER_PREFIX = re.compile(
@@ -18,25 +17,5 @@ def parse_command_query(query: str) -> tuple[str, str] | None:
 
 
 async def command_query_node(state, deps):
-    server_id, command = parse_command_query(state["query"])
-    try:
-        commands = await deps.mcp.call_tool("list_server_commands", {"server_id": server_id})
-        if not any(command in (c["command_id"], c["command"]) for c in commands):
-            supported = ", ".join(c["command_id"] for c in commands)
-            return {"final": f"{server_id}의 지원 명령: {supported}\n"
-                             "예: 서버 B top 조회해줘\n"
-                             "명령 ID 또는 목록의 정확한 명령문을 지정해주세요.",
-                    "events": state["events"] + [{"type": "Finalize", "pipeline": "local-command"}]}
-        result = await deps.mcp.call_tool(
-            "get_command_result", {"server_id": server_id, "command": command})
-    except ValueError as exc:
-        return {"final": f"명령어 조회 실패: {exc}",
-                "events": state["events"] + [{"type": "Finalize", "pipeline": "local-command"}]}
-    return {
-        "final": json.dumps(result, ensure_ascii=False, indent=2),
-        "events": state["events"] + [
-            {"type": "CommandCompleted", "server_id": server_id,
-             "command": result["command"], "exit_code": result["exit_code"]},
-            {"type": "Finalize", "pipeline": "local-command"},
-        ],
-    }
+    from .investigation import investigate
+    return await investigate(state, deps)

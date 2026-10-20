@@ -74,6 +74,10 @@ PLAN_INSTRUCTIONS = (
 
 
 class OpenAILLM:
+    def monitoring_json(self, purpose: str, payload: dict, schema: dict):
+        from .investigation_models import INSTRUCTIONS
+        return self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), json_mode=True)
+
     def __init__(self, model: str, usd_per_1k_tokens: float):
         self.name = f"openai:{model}"
         self.model = model
