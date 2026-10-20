@@ -35,12 +35,15 @@ class Model(FastLLM):
 
 
 class CompletionTests(unittest.IsolatedAsyncioTestCase):
-    async def run_flow(self,requirements,fast,*,tasks=None,writer=None,reviews=None):
+    async def run_flow(self,requirements,reviewer,*,tasks=None,writer=None,reviews=None):
         self.mcp=FixtureMCP();self.writer=writer or Model()
+        self.writer.scripts.update(reviewer.scripts)
+        self.writer.name="standard-writer-and-validator"
+        self.fast=Model();self.fast.name="unused-fast-model"
         self.planner=Model(plan=[dict(tasks=tasks or [task("server-a","cpu")],requirements=requirements)],
                            review=reviews or [dict(tasks=[])])
         return await investigate(dict(query="서버 A 요청 항목을 빠짐없이 설명해줘",history=[],events=[],cost_usd=0),
-            SimpleNamespace(mcp=self.mcp,fast_llm=fast,monitoring_llm=self.planner,quality_llm=self.writer))
+            SimpleNamespace(mcp=self.mcp,fast_llm=self.fast,monitoring_llm=self.planner,quality_llm=self.writer))
 
     async def test_missing_information_loops_back_and_gap_reaches_writer(self):
         fast=Model(final_review=[review(chk("r1"),chk("r2","unmet","프로세스 근거가 없음"),tasks=[task("server-a","process")]),
@@ -48,8 +51,10 @@ class CompletionTests(unittest.IsolatedAsyncioTestCase):
         r=await self.run_flow([req("cpu"),req("process")],fast)
         self.assertEqual(self.mcp.calls,[("server-a","top"),("server-a","ps")])
         self.assertEqual(r["final_validation"]["status"],"passed")
-        self.assertEqual([p for p,_ in fast.inputs],["final_review","final_review"])
-        self.assertFalse(any(p=="final_review" for p,_ in self.writer.inputs))
+        self.assertEqual([p for p,_ in self.writer.inputs],["report","final_review","report","final_review"])
+        self.assertEqual(self.fast.inputs,[])
+        self.assertEqual(r["final_validation"]["model"],self.writer.name)
+        self.assertTrue(all(v["model"]==self.writer.name for v in r["final_reviews"]))
         second=[p for name,p in self.writer.inputs if name=="report"][1]
         self.assertEqual(second["query"],"서버 A 요청 항목을 빠짐없이 설명해줘")
         self.assertTrue(any("프로세스 근거가 없음" in g["reason"] for g in second["requirement_issues"]))

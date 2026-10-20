@@ -195,7 +195,7 @@ async def investigate(state, deps):
             spec["information_ids"]["items"]["enum"] = [i["information_id"] for i in payload["information"]] + [
                 "history", "deployment", "network.performance"]
         if contract is AnswerReview:
-            # The small model judges answer adequacy only; capability state belongs to code.
+            # The validator judges answer adequacy only; capability state belongs to code.
             schema["$defs"]["RequirementCheck"]["properties"]["status"]["enum"] = ["satisfied", "unmet"]
         for attempt in range(2):
             try:
@@ -513,7 +513,7 @@ async def investigate(state, deps):
                 if c.status == "unavailable" and r["status"] not in {"failed", "unsupported"}:
                     raise ValueError("추가 확인이 가능한 요구를 임의로 미지원 처리할 수 없습니다.")
         try:
-            review = await ask(deps.fast_llm, "final_review", {
+            review = await ask(deps.quality_llm, "final_review", {
                 "query": query, "targets": targets, "draft_answer": text,
                 **ledger.payload(), "evidence": [{k:e[k] for k in ("evidence_id", "server_id", "observed_at", "facts", "error", "exit_code")} for e in evidence],
                 "calculations": calculations, "repair_attempt": repair,
@@ -521,16 +521,16 @@ async def investigate(state, deps):
                 "remaining_command_calls": max(0, MAX_COMMAND_CALLS - calls),
             }, AnswerReview, checked_review)
         except ValueError as exc:
-            final_reviews.append({"attempt":repair+1,"model":getattr(deps.fast_llm,"name","fast_llm"),
+            final_reviews.append({"attempt":repair+1,"model":getattr(deps.quality_llm,"name","quality_llm"),
                                   "error":str(exc),"checks":[],"status":"unverified"})
             ledger.note("final_validation", str(exc), list(expected_ids))
             final_validation = {"status":"unverified", "request_fully_satisfied":False,
-                                "reason":str(exc), "model":getattr(deps.fast_llm, "name", "fast_llm"),
+                                "reason":str(exc), "model":getattr(deps.quality_llm, "name", "quality_llm"),
                                 "repair_rounds":repair}
             limitations.append("최종 답변 검증을 완료하지 못했습니다. 요청 충족을 보장하지 않습니다.")
             break
         record = review.model_dump()
-        record.update(attempt=repair + 1, model=getattr(deps.fast_llm, "name", "fast_llm"))
+        record.update(attempt=repair + 1, model=getattr(deps.quality_llm, "name", "quality_llm"))
         final_reviews.append(record)
         ledger.apply_checks(review.checks, f"final_validation_{repair+1}")
         ledger.add(review.missing_requirements, targets, "final_validation")
