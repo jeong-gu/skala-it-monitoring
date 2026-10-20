@@ -94,6 +94,24 @@
         <div class="bubble">{{ item.text }}</div>
       </div>
 
+      <details v-else-if="item.kind === 'investigation' && item.tasks.length" class="prompt-box" open>
+        <summary>조사 Task와 확인 정보</summary>
+        <div v-for="task in item.tasks" :key="task.task_id" style="padding:10px 12px;border-top:1px solid #3a3a52">
+          <strong>{{ task.server_id }} · {{ task.goal }}</strong>
+          <div v-for="(status, id) in task.information_status" :key="id">
+            {{ task.information_labels?.[id] || id }}: {{ statusLabel(status) }}
+          </div>
+          <div>조회 계획: {{ task.command_ids.join(', ') || '미지원 또는 계획 대기' }}</div>
+        </div>
+      </details>
+
+      <div v-else-if="item.kind === 'evidence'">
+        <details v-for="e in item.evidence" :key="e.evidence_id" class="prompt-box" style="margin:6px 0">
+          <summary>{{ e.evidence_id }} · {{ e.server_id }} · {{ e.command }} · 원문 근거</summary>
+          <pre>{{ JSON.stringify(e, null, 2) }}</pre>
+        </details>
+      </div>
+
       <details v-else-if="item.kind === 'prompt'" class="prompt-box">
         <summary>LLM에 전달된 최종 프롬프트 보기</summary>
         <pre>{{ item.text }}</pre>
@@ -104,7 +122,7 @@
     <input
       v-model="input"
       autocomplete="off"
-      placeholder="예: 서버 B top 조회해줘 / 서버 G vm_stat 조회해줘"
+      placeholder="예: 서버 B가 느린데 원인을 확인해줘 / 서버 G 메모리 상태는 어때?"
     />
     <button type="submit" :disabled="sending">보내기</button>
   </form>
@@ -115,6 +133,9 @@
 const { createApp, ref, reactive, nextTick } = Vue;
 
 const STEP_LABELS = {
+  RequirementsIdentified: e => `조사 대상 확인: ${e.targets.join(', ')}`,
+  CommandSelected: e => `${e.server_id}: ${e.command} 선택 (${e.information_ids.join(', ')})`,
+  InvestigationReview: e => `결과 검토 후 추가 Task ${e.additional_task_count}개 계획`,
   CommandCompleted: e => `${e.server_id}: ${e.command} 조회 완료 (종료 코드 ${e.exit_code})`,
   PlanCreated: e => `계획 수립: 할 일 ${e.task_count}가지${e.targets?.length ? ` (시스템: ${e.targets.join(', ')})` : ''}`,
   GateApplied: e => e.removed_analysis_tasks ? `불필요한 작업 ${e.removed_analysis_tasks}건 제거` : null,
@@ -136,6 +157,7 @@ createApp({
     const logEl = ref(null);
     const thread = 't-web-' + Math.random().toString(36).slice(2, 8);
     let nextId = 0;
+    const statusLabel = status => ({pending:'미조회',obtained:'정보 확보',needs_more:'추가 확인 필요',failed:'조회 실패',unsupported:'미지원'}[status] || status);
 
     fetch('/health').then(r => r.json()).then(h => {
       backendLabel.value = `${h.llm_backend} 실모델(${h.fast_llm}/${h.quality_llm}) · all_total_vue`;
@@ -157,17 +179,26 @@ createApp({
 
       const stepsItem = reactive({ id: nextId++, kind: 'steps', steps: [] });
       log.value.push(stepsItem);
+      const tasksItem = reactive({ id: nextId++, kind: 'investigation', tasks: [] });
+      log.value.push(tasksItem);
       scrollToBottom();
 
       const url = `/chat/stream?message=${encodeURIComponent(text)}&thread_id=${encodeURIComponent(thread)}`;
       const es = new EventSource(url);
       let streamItem = null;
       let streamAttempt = null;   // write_node 재작성(attempt 증가) 시 새 말풍선으로 끊는다
+      let gotFinal = false;
 
       es.onmessage = (event) => {
         if (event.data === '[DONE]') { es.close(); sending.value = false; return; }
         let e;
         try { e = JSON.parse(event.data); } catch { return; }
+
+        if (e.type === 'InvestigationTasks') {
+          tasksItem.tasks = e.tasks;
+          scrollToBottom();
+          return;
+        }
 
         if (e.type === 'AnswerToken') {
           if (!streamItem || streamAttempt !== e.attempt) {
@@ -181,11 +212,14 @@ createApp({
         }
 
         if (e.type === 'FinalAnswer') {
+          gotFinal = true;
           if (!streamItem) {
             streamItem = reactive({ id: nextId++, kind: 'agent', text: '' });
             log.value.push(streamItem);
           }
           streamItem.text = e.reply;   // 토큰 합산 결과와 서버의 최종 텍스트를 일치시킨다
+          if (e.tasks?.some(t => t.information_ids)) tasksItem.tasks = e.tasks;
+          if (e.evidence?.length) log.value.push({ id: nextId++, kind: 'evidence', evidence: e.evidence });
           if (e.prompt) log.value.push({ id: nextId++, kind: 'prompt', text: e.prompt });
           streamItem = null;
           streamAttempt = null;
@@ -201,10 +235,13 @@ createApp({
         scrollToBottom();
       };
 
-      es.onerror = () => { es.close(); sending.value = false; };
+      es.onerror = () => {
+        es.close(); sending.value = false;
+        if (!gotFinal) log.value.push({id:nextId++,kind:'agent',text:'연결이 끊어져 조사를 완료하지 못했습니다. 완료되지 않은 결과는 정상 상태로 판단하지 않습니다.'});
+      };
     }
 
-    return { backendLabel, log, input, sending, logEl, onSubmit };
+    return { backendLabel, log, input, sending, logEl, onSubmit, statusLabel };
   },
 }).mount('#app');
 </script>

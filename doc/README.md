@@ -1,9 +1,10 @@
 # all_total_vue — 운영 인시던트 대응 에이전트 (Vue 프론트엔드 버전)
 
-## 로컬 명령어 조회 추가
+## 정보 중심 서버 조사 추가
 
 기존 FastAPI의 `/monitoring` 경로와 MCP를 통해 서버 A~H의 Linux/macOS 명령어 출력 JSON을
-조회할 수 있다. 채팅 예: `서버 B top 조회해줘`. [명령어 시나리오 API 사용법](local_commands.md).
+조회할 수 있다. 자연어 요청을 task·정보 ID로 나누고 OS별 명령을 선택하며 추가 조사와 원문 근거를 제공한다.
+채팅 예: `서버 B가 느린데 원인을 확인해줘`. [정보 중심 서버 조사 사용법](local_commands.md).
 실제 셸 실행과 외부 모니터링 서버 연결은 포함하지 않는다.
 
 `all_total`과 백엔드(server.py, agent/, mcp_server.py 등)는 완전히 동일하고, 브라우저
