@@ -21,6 +21,7 @@ from langsmith import traceable
 
 from .deps import SupervisorDeps
 from .retry import with_retry
+from .command_query import command_query_node, parse_command_query
 
 
 def _load_known_systems() -> set[str]:
@@ -75,6 +76,9 @@ def _cost(state: AgentState, usage: dict) -> float:
 @traceable(name="route_node")
 async def route_node(state: AgentState, deps: SupervisorDeps) -> dict:
     """Wave 5 — 모든 쿼리가 무거운 파이프라인을 탈 필요는 없다."""
+    if parse_command_query(state["query"]) is not None:
+        return {"route": "commands", "needs_analysis": False,
+                "events": state.get("events", []) + [{"type": "RouteDecided", "route": "commands"}]}
     result, usage = deps.fast_llm.route(state["query"])
     event = {"type": "RouteDecided", "route": result["route"]}
     return {"route": result["route"], "needs_analysis": result["needs_analysis"],
@@ -295,6 +299,8 @@ async def finalize_node(state: AgentState, deps: SupervisorDeps) -> dict:
 
 
 def _after_route(state: AgentState) -> str:
+    if state["route"] == "commands":
+        return "command_query"
     return "chat_answer" if state["route"] == "chat" else "plan"
 
 
@@ -312,6 +318,7 @@ def build_graph(deps: SupervisorDeps):
     node = lambda fn: partial(fn, deps=deps)   # Wave 13 — 명시적 의존성 주입
     g.add_node("route", node(route_node))
     g.add_node("chat_answer", node(chat_answer_node))
+    g.add_node("command_query", node(command_query_node))
     g.add_node("plan", node(plan_node))
     g.add_node("gate", node(gate_node))
     g.add_node("research", node(research_node))
@@ -323,8 +330,9 @@ def build_graph(deps: SupervisorDeps):
 
     g.set_entry_point("route")
     g.add_conditional_edges("route", _after_route,
-                            {"chat_answer": "chat_answer", "plan": "plan"})
+                            {"chat_answer": "chat_answer", "plan": "plan", "command_query": "command_query"})
     g.add_edge("chat_answer", END)
+    g.add_edge("command_query", END)
     g.add_edge("plan", "gate")
     g.add_edge("gate", "research")
     g.add_edge("research", "replan_check")

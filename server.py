@@ -28,6 +28,7 @@ from agent.graph import build_graph
 from agent.mcp_client import MCPClient
 from agent.session_store import SqliteSessionStore
 from agent.supervisor_v1 import run_v1
+from monitoring.api import create_router
 
 CREATION_COUNT = 0   # Wave 1 — 프로세스 내 Agent 번들 생성 횟수 (항상 1이어야 정상)
 
@@ -88,6 +89,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(create_router())
 
 
 @app.get("/health")

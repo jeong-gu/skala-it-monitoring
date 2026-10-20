@@ -104,7 +104,7 @@
     <input
       v-model="input"
       autocomplete="off"
-      placeholder="예: auth-service 로그인 응답이 느려졌어요. 원인 확인해주세요"
+      placeholder="예: 서버 B top 조회해줘 / 서버 G vm_stat 조회해줘"
     />
     <button type="submit" :disabled="sending">보내기</button>
   </form>
@@ -115,6 +115,7 @@
 const { createApp, ref, reactive, nextTick } = Vue;
 
 const STEP_LABELS = {
+  CommandCompleted: e => `${e.server_id}: ${e.command} 조회 완료 (종료 코드 ${e.exit_code})`,
   PlanCreated: e => `계획 수립: 할 일 ${e.task_count}가지${e.targets?.length ? ` (시스템: ${e.targets.join(', ')})` : ''}`,
   GateApplied: e => e.removed_analysis_tasks ? `불필요한 작업 ${e.removed_analysis_tasks}건 제거` : null,
   TaskCompleted: e => (e.source === 'monitoring'

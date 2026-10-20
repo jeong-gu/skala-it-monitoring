@@ -15,10 +15,41 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
+from fastmcp.exceptions import ToolError
+
+from monitoring.client import request_local_api
 
 mcp = FastMCP(name="capstone-all-total-ops")
 
 DATA_DIR = Path(__file__).parent / "data"
+
+
+async def _local_request(method: str, path: str, **kwargs):
+    try:
+        return await request_local_api(method, path, **kwargs)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool()
+async def list_command_servers() -> list[dict]:
+    """로컬 명령어 시나리오에 등록된 서버 ID, 이름, OS를 조회합니다."""
+    return await _local_request("GET", "/monitoring/servers")
+
+
+@mcp.tool()
+async def list_server_commands(server_id: str) -> list[dict]:
+    """해당 서버에서 조회 가능한 명령 ID와 정확한 명령문을 확인합니다."""
+    # Encode the identifier as one URL path segment.
+    from urllib.parse import quote
+    return await _local_request("GET", f"/monitoring/servers/{quote(server_id, safe='')}/commands")
+
+
+@mcp.tool()
+async def get_command_result(server_id: str, command: str) -> dict:
+    """로컬 FastAPI에 명령을 요청해 저장된 JSON 출력 원문을 받습니다. 실제 셸 실행은 없습니다."""
+    return await _local_request("POST", "/monitoring/commands",
+                                json={"server_id": server_id, "command": command})
 
 
 class SystemStatus(BaseModel):

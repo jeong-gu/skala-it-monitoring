@@ -1,0 +1,49 @@
+{
+  "server_id": "server-a",
+  "display_name": "서버 A",
+  "os": "linux",
+  "scenario": "normal",
+  "observed_at": "2026-10-20T12:00:01+09:00",
+  "commands": {
+    "uname": {
+      "stdout": "Linux server-a 6.8.0-generic #1 SMP x86_64 GNU/Linux\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "top": {
+      "stdout": "top - 12:00:00 up 3 days,  2:00,  1 user,  load average: 0.76, 1.00, 0.80\nTasks: 120 total, 1 running, 119 sleeping, 0 stopped, 0 zombie\n%Cpu(s): 16.0 us, 3.0 sy, 0.0 ni, 81.0 id, 0.0 wa, 0.0 hi, 0.0 si, 0.0 st\nMiB Mem : 8192.0 total, 4608.0 free, 3072.0 used, 512.0 buff/cache\nMiB Swap: 2048.0 total, 2048.0 free, 0.0 used. 5120.0 avail Mem\n    PID USER  %CPU %MEM COMMAND\n   2140 app  64.0 24.4 app-worker\n\ntop - 12:00:01 up 3 days,  2:00,  1 user,  load average: 0.76, 1.00, 0.80\nTasks: 120 total, 1 running, 119 sleeping, 0 stopped, 0 zombie\n%Cpu(s): 16.0 us, 3.0 sy, 0.0 ni, 81.0 id, 0.0 wa, 0.0 hi, 0.0 si, 0.0 st\nMiB Mem : 8192.0 total, 4608.0 free, 3072.0 used, 512.0 buff/cache\nMiB Swap: 2048.0 total, 2048.0 free, 0.0 used. 5120.0 avail Mem\n    PID USER  %CPU %MEM COMMAND\n   2140 app  64.0 24.4 app-worker\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "free": {
+      "stdout": "               total        used        free      shared  buff/cache   available\nMem:            8192        3072        4608           0         512        5120\nSwap:           2048        0        2048\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "ps": {
+      "stdout": "  PID  PPID COMMAND          %CPU %MEM     RSS\n 2140     1 app-worker        64.0 24.4 2043904\n 1200     1 nginx              1.0  0.2   16384\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "df": {
+      "stdout": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        100G  40G  60G   40% /\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "ls": {
+      "stdout": "total 128M\ndrwxr-xr-x  5 root root  160 Oct 20 12:00 .\n-rw-r-----  1 root root  128M Oct 20 12:00 application.log\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "du": {
+      "stdout": "131072\t/var/log/\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "ss": {
+      "stdout": "Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\ntcp   LISTEN 0      511    0.0.0.0:8080       0.0.0.0:*         users:((\"app-worker\",pid=2140,fd=7))\n",
+      "stderr": "",
+      "exit_code": 0
+    }
+  }
+}

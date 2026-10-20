@@ -1,0 +1,49 @@
+{
+  "server_id": "server-g",
+  "display_name": "서버 G",
+  "os": "macos",
+  "scenario": "memory_pressure",
+  "observed_at": "2026-10-20T12:00:01+09:00",
+  "commands": {
+    "uname": {
+      "stdout": "Darwin server-g 24.6.0 Darwin Kernel Version 24.6.0 arm64\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "top": {
+      "stdout": "Processes: 120 total, 1 running, 119 sleeping, 600 threads\n2026/10/20 12:00:00\nLoad Avg: 2.00, 1.00, 0.80\nCPU usage: 22.0% user, 3.0% sys, 75.0% idle\nPhysMem: 15360M used (2048M wired, 1024M compressor), 1024M unused.\nPID  COMMAND          %CPU MEM\n2140 cache-worker     0.0 9984M\n\nProcesses: 120 total, 1 running, 119 sleeping, 600 threads\n2026/10/20 12:00:01\nLoad Avg: 2.00, 1.00, 0.80\nCPU usage: 22.0% user, 3.0% sys, 75.0% idle\nPhysMem: 15360M used (2048M wired, 1024M compressor), 1024M unused.\nPID  COMMAND          %CPU MEM\n2140 cache-worker     176.0 9984M\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "vm_stat": {
+      "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                               65536.\nPages active:                             786432.\nPages inactive:                           0.\nPages speculative:                        0.\nPages wired down:                         131072.\nPages occupied by compressor:             65536.\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "ps": {
+      "stdout": "  PID  PPID COMMAND          %CPU %MEM     RSS\n 2140     1 cache-worker     176.0 60.9 10223616\n 1200     1 nginx              1.0  0.2   16384\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "df": {
+      "stdout": "Filesystem       Size   Used  Avail Capacity Mounted on\n/dev/disk3s1s1   100G  40G  60G   40% /\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "ls": {
+      "stdout": "total 128M\ndrwxr-xr-x  5 root wheel  160 Oct 20 12:00 .\n-rw-r-----  1 root wheel  128M Oct 20 12:00 application.log\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "du": {
+      "stdout": "131072\t/var/log/\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "lsof": {
+      "stdout": "COMMAND    PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\napp-worker 2140 app  7u IPv4 0x123  0t0 TCP *:8080 (LISTEN)\n",
+      "stderr": "",
+      "exit_code": 0
+    }
+  }
+}

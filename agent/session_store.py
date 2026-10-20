@@ -4,6 +4,7 @@
 대화 이력이 유지된다. in-memory dict였다면 재시작 즉시 소실됐을 상태다.
 """
 import sqlite3
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -11,7 +12,9 @@ DB_PATH = Path(__file__).parent.parent / "session.db"
 
 
 class SqliteSessionStore:
-    def __init__(self, db_path: Path = DB_PATH):
+    def __init__(self, db_path: Path | None = None):
+        if db_path is None:
+            db_path = Path(os.environ.get("SESSION_DB_PATH", str(DB_PATH)))
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS messages ("

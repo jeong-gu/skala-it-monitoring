@@ -68,12 +68,14 @@ class MCPClient:
             self.sessions = {}
 
     @traceable(run_type="tool", name="mcp.call_tool")
-    async def call_tool(self, name: str, arguments: dict, server: str = "ops") -> dict:
+    async def call_tool(self, name: str, arguments: dict, server: str = "ops") -> dict | list:
         if self._flaky_pending and name == "get_monitoring_status":
             self._flaky_pending = False
             raise asyncio.TimeoutError("simulated transient timeout (Wave 9 demo)")
         async with self._lock:
             result = await self.sessions[server].call_tool(name, arguments)
+        if _attr(result, "isError", "is_error"):
+            raise ValueError(" ".join(c.text for c in result.content if hasattr(c, "text")))
         return json.loads(result.content[0].text)
 
     @traceable(run_type="tool", name="mcp.list_resource_templates")
