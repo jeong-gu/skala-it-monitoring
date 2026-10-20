@@ -9,11 +9,13 @@ from pydantic import ValidationError
 
 from monitoring.api import CommandResult
 from monitoring.evidence import extract_facts
-from .investigation_models import InvestigationReport, TaskPlan, TaskSpec
+from .investigation_models import AnswerReview, InvestigationReport, TaskPlan, TaskSpec
 from .request_ledger import RequestLedger, RequirementSpec
+from .answer_calculations import calculate
 
 MAX_ROUNDS = 3
 MAX_COMMAND_CALLS = 12
+MAX_ANSWER_REPAIRS = 2
 SERVER = re.compile(r"(?:server[- ]([a-z0-9]+)|서버\s*([a-z])(?![a-z0-9_-]))", re.I)
 MONITORING_WORDS = re.compile(r"서버|cpu|메모리|memory|프로세스|디스크|네트워크|소켓|로그|운영체제|커널|swap", re.I)
 
@@ -94,7 +96,7 @@ def verify_report(report, evidence):
         if not set(hypothesis.evidence_ids) <= by_id.keys():
             raise ValueError("Unknown evidence ID")
         selected = [by_id[i] for i in hypothesis.evidence_ids]
-        if not all(any(q in e["stdout"] for e in selected) for q in hypothesis.quotes):
+        if not all(q.strip() and any(q in e["stdout"] for e in selected) for q in hypothesis.quotes):
             raise ValueError("인용이 원문에 없습니다. quote_candidates의 한 줄을 공백까지 그대로 복사하세요.")
         if not set(mentioned_servers(hypothesis.text)) <= {e["server_id"] for e in selected}:
             raise ValueError("Hypothesis refers to a different server")
@@ -123,13 +125,19 @@ def verify_report(report, evidence):
             raise ValueError("확정·과장 표현입니다. 모두 차지, 가득, 완전히, 오류 없음 등의 표현을 제거하고 관측된 부분 사용량의 기여 가능성만 기술하세요.")
 
 
-def render_answer(tasks, evidence, hypotheses, limitations):
+def render_answer(tasks, evidence, hypotheses, limitations, answers=(), calculations=(), requirements=()):
     lines = ["모의 시나리오의 저장된 출력 기준입니다. 실제 장비의 실시간 측정값은 아닙니다.", "", "확인한 사실"]
     for e in evidence:
         for fact in e["facts"]:
             lines.append(f"- [{e['evidence_id']}] {e['server_id']} · {e['command']}: {fact['summary']}")
     if not any(e["facts"] for e in evidence):
         lines.append("- 확인 가능한 정보를 확보하지 못했습니다.")
+    if answers or calculations:
+        lines += ["", "요청에 대한 답변"]
+        lines.extend(f"- {a['text']} (근거: {', '.join(a['evidence_ids'])})" for a in answers)
+        for c in calculations:
+            lines.append(f"- {c['label']}: {Decimal(c['value']):f} {c['unit']} "
+                         f"(계산: {c['equation']}; 근거: {', '.join(c['evidence_ids'])})")
     lines += ["", "원인 후보 — 확정되지 않음"]
     if hypotheses:
         for item in hypotheses:
@@ -138,6 +146,8 @@ def render_answer(tasks, evidence, hypotheses, limitations):
         lines.append("- 확보한 정보만으로 원인을 확정하지 않습니다.")
     unresolved = [f"{t['server_id']} · {t['goal']}: {i} ({s})" for t in tasks
                   for i, s in t["information_status"].items() if s != "obtained"]
+    unresolved += [f"{r['description']}: {r['reason']}" for r in requirements
+                   if r['status'] != 'satisfied']
     lines += ["", "확인 한계·미확인 항목"]
     lines.extend("- " + text for text in dict.fromkeys(limitations + unresolved))
     if not limitations and not unresolved:
@@ -151,6 +161,9 @@ async def investigate(state, deps):
     events = list(state.get("events", []))
     evidence, tasks, limitations, hypotheses = [], [], [], []
     ledger = RequestLedger()
+    answers, calculations, final_reviews = [], [], []
+    final_validation = {"status": "not_run", "request_fully_satisfied": False,
+                        "reason": "대상 확인·지원 명령 확인 또는 원문 전용 응답은 별도 처리합니다."}
     cost, prompt, calls, rounds = state.get("cost_usd", 0), None, 0, 0
     try:
         writer = get_stream_writer()
@@ -167,7 +180,9 @@ async def investigate(state, deps):
         return {"final": text, "tasks": tasks, "evidence": evidence, "hypotheses": hypotheses,
                 "limitations": list(dict.fromkeys(limitations)), "events": events, "cost_usd": round(cost, 6),
                 "replan_rounds": max(0, rounds - 1), "command_call_count": calls,
-                "last_prompt": prompt, **ledger.payload()}
+                "last_prompt": prompt, **ledger.payload(), "answers": answers,
+                "calculation_results": calculations, "final_reviews": final_reviews,
+                "final_validation": final_validation, "validation_attempts": len(final_reviews)}
 
     async def ask(model, purpose, payload, contract, check=None):
         nonlocal cost, prompt
@@ -178,6 +193,9 @@ async def investigate(state, deps):
             spec["server_id"]["enum"] = payload["targets"]
             spec["information_ids"]["items"]["enum"] = [i["information_id"] for i in payload["information"]] + [
                 "history", "deployment", "network.performance"]
+        if contract is AnswerReview:
+            # The small model judges answer adequacy only; capability state belongs to code.
+            schema["$defs"]["RequirementCheck"]["properties"]["status"]["enum"] = ["satisfied", "unmet"]
         for attempt in range(2):
             try:
                 # Existing LLM adapters are synchronous; keep the FastAPI loop free
@@ -261,6 +279,8 @@ async def investigate(state, deps):
         plan = TaskPlan.model_validate({"tasks": specs})
     else:
         def initial_check(plan):
+            if any(not set(r.server_ids) <= set(targets) for r in plan.requirements):
+                raise ValueError("요구사항 대상이 원래 대상과 다릅니다.")
             if {t.server_id for t in plan.tasks} != set(targets):
                 raise ValueError("지정된 모든 대상 서버의 task가 필요합니다. 다른 서버로 대체할 수 없습니다.")
         try:
@@ -281,6 +301,7 @@ async def investigate(state, deps):
         for t in plan.tasks], targets, "plan")
 
     def add_tasks(plan):
+        ledger.add(plan.requirements, targets, "review")
         for spec in plan.tasks:
             if spec.server_id not in targets:
                 raise ValueError("요청하지 않은 서버의 task")
@@ -302,61 +323,75 @@ async def investigate(state, deps):
         emit("InvestigationTasks", tasks=json.loads(json.dumps(tasks, ensure_ascii=False)))
 
     attempted = set()
+
+    async def collect(plan):
+        nonlocal calls, rounds
+        add_tasks(plan)
+        jobs = {}
+        for task in tasks:
+            sid = task["server_id"]
+            by_id = {c["command_id"]: c for c in catalogs[sid]}
+            if explicit and rounds == 0:
+                required_commands = explicit
+            else:
+                required_commands = [c for iid, status in task["information_status"].items()
+                                     if status == "pending" for c in
+                                     information.get(iid, {}).get("commands_by_os", {}).get(task["os"], [])]
+            for cid in required_commands:
+                if cid in by_id and (sid, cid) not in attempted:
+                    jobs[(sid, cid)] = by_id[cid]
+        if not jobs:
+            return False
+        if rounds >= MAX_ROUNDS or calls >= MAX_COMMAND_CALLS:
+            ledger.note("collection_limit", "추가 조회 2회 또는 명령 조회 12건 한도에 도달했습니다.")
+            limitations.append("조회 한도에 도달해 추가 정보를 확보하지 못했습니다.")
+            return False
+        rounds += 1
+        for (sid, cid), command in jobs.items():
+            # Earlier jobs in the same plan can already satisfy this information.
+            wanted = {iid for t in tasks if t["server_id"] == sid for iid, status in t["information_status"].items()
+                      if status == "pending"}
+            if not (explicit and rounds == 1) and not wanted.intersection(command["information_ids"]):
+                continue
+            if calls >= MAX_COMMAND_CALLS:
+                limitations.append("요청당 명령 조회 한도에 도달해 추가 정보를 확보하지 못했습니다.")
+                ledger.note("collection_limit", limitations[-1])
+                break
+            calls += 1
+            attempted.add((sid, cid))
+            for t in tasks:
+                if t["server_id"] == sid and set(t["information_ids"]) & set(command["information_ids"]):
+                    if cid not in t["command_ids"]:t["command_ids"].append(cid)
+            emit("CommandSelected", server_id=sid, command=command["command"],
+                 information_ids=command["information_ids"], round=rounds)
+            try:
+                raw = await deps.mcp.call_tool("get_command_result", {"server_id": sid, "command": cid})
+                checked = CommandResult.model_validate(raw)
+                if (checked.server_id, checked.os, checked.command_id, checked.command) != (
+                        sid, server_map[sid]["os"], cid, command["command"]):
+                    raise ValueError("요청 대상과 명령 응답이 일치하지 않습니다.")
+                result = checked.model_dump(mode="json")
+                result["facts"] = extract_facts(result)
+                result["error"] = None
+            except ValueError as exc:
+                result = {"server_id": sid, "os": server_map[sid]["os"], "command_id": cid,
+                          "command": command["command"], "stdout": "", "stderr": "", "exit_code": None,
+                          "observed_at": None, "source": "unavailable", "facts": [], "error": str(exc)}
+            result["evidence_id"] = f"e{len(evidence)+1}"
+            evidence.append(result)
+            emit("CommandCompleted", server_id=sid, command=command["command"], exit_code=result["exit_code"])
+            for t in tasks:task_status(t, evidence, information, catalogs)
+            ledger.sync(tasks, evidence, f"collection_{rounds}")
+            emit("RequestRequirements", **ledger.payload())
+            emit("InvestigationTasks", tasks=json.loads(json.dumps(tasks, ensure_ascii=False)))
+        return True
+
     try:
-        for round_index in range(MAX_ROUNDS):
-            rounds = round_index + 1
-            add_tasks(plan)
-            jobs = {}
-            for task in tasks:
-                sid = task["server_id"]
-                by_id = {c["command_id"]: c for c in catalogs[sid]}
-                if explicit and round_index == 0:
-                    required_commands = explicit
-                else:
-                    required_commands = [c for iid, status in task["information_status"].items()
-                                         if status == "pending" for c in
-                                         information.get(iid, {}).get("commands_by_os", {}).get(task["os"], [])]
-                for cid in required_commands:
-                    if cid in by_id:
-                        if cid not in task["command_ids"]:
-                            task["command_ids"].append(cid)
-                        if (sid, cid) not in attempted:
-                            jobs[(sid, cid)] = by_id[cid]
-            if not jobs:
+        for _ in range(MAX_ROUNDS):
+            if not await collect(plan):break
+            if calls >= MAX_COMMAND_CALLS or rounds >= MAX_ROUNDS:
                 break
-            for (sid, cid), command in jobs.items():
-                if calls >= MAX_COMMAND_CALLS:
-                    limitations.append("요청당 명령 조회 한도에 도달해 추가 정보를 확보하지 못했습니다.")
-                    break
-                calls += 1
-                attempted.add((sid, cid))
-                emit("CommandSelected", server_id=sid, command=command["command"],
-                     information_ids=command["information_ids"], round=rounds)
-                try:
-                    raw = await deps.mcp.call_tool("get_command_result", {"server_id": sid, "command": cid})
-                    checked = CommandResult.model_validate(raw)
-                    if (checked.server_id, checked.os, checked.command_id, checked.command) != (
-                            sid, server_map[sid]["os"], cid, command["command"]):
-                        raise ValueError("요청 대상과 명령 응답이 일치하지 않습니다.")
-                    result = checked.model_dump(mode="json")
-                    result["facts"] = extract_facts(result)
-                    result["error"] = None
-                except ValueError as exc:
-                    result = {"server_id": sid, "os": server_map[sid]["os"], "command_id": cid,
-                              "command": command["command"], "stdout": "", "stderr": "", "exit_code": None,
-                              "observed_at": None, "source": "unavailable", "facts": [], "error": str(exc)}
-                result["evidence_id"] = f"e{len(evidence)+1}"
-                evidence.append(result)
-                emit("CommandCompleted", server_id=sid, command=command["command"], exit_code=result["exit_code"])
-                for task in tasks:
-                    task_status(task, evidence, information, catalogs)
-                emit("InvestigationTasks", tasks=json.loads(json.dumps(tasks, ensure_ascii=False)))
-            if calls >= MAX_COMMAND_CALLS or round_index == MAX_ROUNDS - 1:
-                if round_index == MAX_ROUNDS - 1:
-                    limitations.append("추가 조사는 최대 두 번까지 수행했습니다. 남은 정보는 미확인으로 둡니다.")
-                break
-            if explicit and not re.search(r"원인|분석|왜|진단", query):
-                break
+            if explicit and not re.search(r"원인|분석|왜|진단", query):break
             def review_check(answer):
                 if not {t.server_id for t in answer.tasks} <= set(targets):
                     raise ValueError("추가 조사 대상이 원래 대상과 다릅니다.")
@@ -366,15 +401,14 @@ async def investigate(state, deps):
                 "evidence": [{k: e[k] for k in ("evidence_id", "server_id", "command_id", "facts", "error")} for e in evidence],
                 **ledger.payload(),
             }, TaskPlan, review_check)
-            # Reuse all available facts, even ones incidentally returned by a command.
             for spec in plan.tasks:
                 spec.information_ids = [i for i in spec.information_ids if i not in obtained[spec.server_id]]
             plan.tasks = [spec for spec in plan.tasks if spec.information_ids]
-            if not plan.tasks:
-                break
+            if not plan.tasks:break
             emit("InvestigationReview", round=rounds, additional_task_count=len(plan.tasks))
     except ValueError as exc:
         limitations.append(str(exc))
+        ledger.note("collection", str(exc))
 
     for task in tasks:
         task_status(task, evidence, information, catalogs)
@@ -393,29 +427,138 @@ async def investigate(state, deps):
     if raw_only:
         results = [{k: v for k, v in e.items() if k not in {"facts", "evidence_id"} and (k != "error" or v)} for e in evidence]
         return finish(json.dumps(results[0] if len(results) == 1 else results, ensure_ascii=False, indent=2))
-    if any(e["facts"] for e in evidence):
+    def writer_payload(feedback):
+        return {"query": query, "targets": targets, "tasks": tasks, **ledger.payload(),
+                "final_feedback": feedback,
+                "evidence": [{"evidence_id": e["evidence_id"], "server_id": e["server_id"],
+                              "command_id": e["command_id"], "observed_at": e["observed_at"],
+                              "facts": e["facts"], "error": e["error"], "exit_code": e["exit_code"],
+                              "quote_candidates": [line for line in e["stdout"].splitlines() if line.strip()]} for e in evidence]}
+
+    async def compose(feedback):
+        nonlocal hypotheses, answers, calculations
+        hypotheses, answers, calculations = [], [], []
+        if not any(e["facts"] for e in evidence):return
+        def checked_report(report):
+            nonlocal calculations
+            ids = [r["requirement_id"] for r in ledger.requirements]
+            computed = [calculate(c, evidence, ids) for c in report.calculations]
+            for a in report.answers:
+                if not set(a.requirement_ids) <= set(ids):raise ValueError("알 수 없는 답변 요구사항 ID")
+                # Exact sources/numbers are checked here; semantic scope is checked by final_review.
+                verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"requirement_ids"})]),
+                              evidence)
+            valid, rejected = [], 0
+            for item in report.hypotheses:
+                try:
+                    verify_report(InvestigationReport(hypotheses=[item]), evidence)
+                    valid.append(item)
+                except ValueError:rejected += 1
+            if report.hypotheses and not valid:verify_report(report, evidence)
+            report.hypotheses = valid
+            calculations = computed
+            if rejected:limitations.append(f"근거 검증을 통과하지 못한 원인 후보 {rejected}개를 제외했습니다.")
         try:
-            def checked_report(report):
-                valid, rejected = [], 0
-                for item in report.hypotheses:
-                    try:
-                        verify_report(InvestigationReport(hypotheses=[item]), evidence)
-                        valid.append(item)
-                    except ValueError:
-                        rejected += 1
-                if report.hypotheses and not valid:
-                    verify_report(report, evidence)  # Return the concrete validation feedback.
-                report.hypotheses = valid
-                if rejected:
-                    limitations.append(f"근거 검증을 통과하지 못한 원인 후보 {rejected}개를 제외했습니다.")
-            report = await ask(deps.quality_llm, "report", {"query": query, "targets": targets,
-                               "evidence": [{"evidence_id": e["evidence_id"], "server_id": e["server_id"], "command_id": e["command_id"],
-                                             "facts": [{"information_id": f["information_id"], "fields": f["fields"]} for f in e["facts"]],
-                                             "quote_candidates": [line for line in e["stdout"].splitlines() if line.strip()]} for e in evidence],
-                               "tasks": tasks, **ledger.payload()}, InvestigationReport,
-                               checked_report)
+            report = await ask(deps.quality_llm, "report", writer_payload(feedback), InvestigationReport, checked_report)
             hypotheses = [h.model_dump() for h in report.hypotheses]
+            answers = [a.model_dump() for a in report.answers]
         except ValueError as exc:
+            calculations = []
+            ledger.note("answer_generation", str(exc))
             limitations.append(f"원인 후보 해석 검증 실패: {exc}. 관측 사실만 제공합니다.")
+
+    def draft(include_requirement_notes=True):
+        # Rebuild notes after repair, including newly failed commands and unsupported fields.
+        for t in tasks:
+            for iid in t["information_ids"]:
+                note = information.get(iid, {}).get("limitations")
+                if note and note not in limitations:limitations.append(note)
+        for e in evidence:
+            if e.get("error") or e.get("exit_code") != 0:
+                note = f"{e['server_id']} · {e['command_id']} 조회 실패: {e.get('error') or e['stderr']}"
+                if note not in limitations:limitations.append(note)
+        return render_answer(tasks, evidence, hypotheses, limitations, answers, calculations, ledger.requirements if include_requirement_notes else ())
+
+    feedback = None
+    for repair in range(MAX_ANSWER_REPAIRS + 1):
+        await compose(feedback)
+        text = draft(include_requirement_notes=False)
+        expected_ids = {r["requirement_id"] for r in ledger.requirements}
+        def checked_review(review):
+            ids = [c.requirement_id for c in review.checks]
+            if set(ids) != expected_ids or len(ids) != len(set(ids)):
+                raise ValueError("모든 원래 요구사항을 중복·누락 없이 검증해야 합니다.")
+            if any(t.server_id not in targets for t in review.repair_tasks):
+                raise ValueError("검증 후 추가 조회 대상이 원래 대상과 다릅니다.")
+            if len(ledger.requirements) + len(review.missing_requirements) > 32:
+                raise ValueError("요구사항 기록 한도에 도달했습니다.")
+            if any(not set(r.server_ids) <= set(targets) for r in review.missing_requirements):
+                raise ValueError("추가 요구사항 대상이 원래 대상과 다릅니다.")
+            by_id = {r["requirement_id"]: r for r in ledger.requirements}
+            for c in review.checks:
+                r = by_id[c.requirement_id]
+                if c.status == "satisfied" and r["status"] in {"failed", "unsupported"}:
+                    c.status = "unavailable"
+                elif c.status == "satisfied" and r["information_ids"] and r["status"] in {"needs_more", "pending"}:
+                    raise ValueError("확보하지 못한 필수 정보는 충족으로 처리할 수 없습니다.")
+                if c.status == "satisfied" and r["kind"] == "calculation" and not any(c.requirement_id in x["requirement_ids"] for x in calculations):
+                    c.status, c.reason = "unmet", "요청한 계산 결과·계산식·원문 출처가 답변에 없습니다."
+                if c.status == "satisfied" and r["kind"] == "diagnosis" and not hypotheses:
+                    c.status, c.reason = "unmet", "원인 후보를 요청했지만 검증된 후보를 제시하지 못했습니다."
+                if c.status == "unavailable" and r["status"] not in {"failed", "unsupported"}:
+                    raise ValueError("추가 확인이 가능한 요구를 임의로 미지원 처리할 수 없습니다.")
+        try:
+            review = await ask(deps.fast_llm, "final_review", {
+                "query": query, "targets": targets, "draft_answer": text,
+                **ledger.payload(), "evidence": [{k:e[k] for k in ("evidence_id", "server_id", "observed_at", "facts", "error", "exit_code")} for e in evidence],
+                "calculations": calculations, "repair_attempt": repair,
+                "remaining_query_rounds": max(0, MAX_ROUNDS - rounds),
+                "remaining_command_calls": max(0, MAX_COMMAND_CALLS - calls),
+            }, AnswerReview, checked_review)
+        except ValueError as exc:
+            final_reviews.append({"attempt":repair+1,"model":getattr(deps.fast_llm,"name","fast_llm"),
+                                  "error":str(exc),"checks":[],"status":"unverified"})
+            ledger.note("final_validation", str(exc), list(expected_ids))
+            final_validation = {"status":"unverified", "request_fully_satisfied":False,
+                                "reason":str(exc), "model":getattr(deps.fast_llm, "name", "fast_llm"),
+                                "repair_rounds":repair}
+            limitations.append("최종 답변 검증을 완료하지 못했습니다. 요청 충족을 보장하지 않습니다.")
+            break
+        record = review.model_dump()
+        record.update(attempt=repair + 1, model=getattr(deps.fast_llm, "name", "fast_llm"))
+        final_reviews.append(record)
+        ledger.apply_checks(review.checks, f"final_validation_{repair+1}")
+        ledger.add(review.missing_requirements, targets, "final_validation")
+        for c in review.checks:
+            if c.status != "satisfied":ledger.note("final_validation", c.reason, [c.requirement_id])
+        unmet = [c for c in review.checks if c.status == "unmet"]
+        complete = not unmet and not review.missing_requirements and all(c.status == "satisfied" for c in review.checks)
+        final_validation = {"status":"passed" if complete else "partial", "request_fully_satisfied":complete,
+                            "model":record["model"], "repair_rounds":repair,
+                            "reason":"모든 원래 요구사항의 답변 충족 확인" if complete else "미충족 또는 제공 불가능한 요구가 남았습니다."}
+        emit("FinalAnswerValidation", **final_validation, checks=record["checks"])
+        emit("RequestRequirements", **ledger.payload())
+        if not unmet and not review.missing_requirements:break
+        if repair >= MAX_ANSWER_REPAIRS:
+            limitations.append("최종 답변 보완은 최대 2회까지 수행했습니다. 남은 요구는 미충족으로 남깁니다.")
+            break
+        feedback = {"checks":record["checks"], "rewrite_instructions":review.rewrite_instructions,
+                    "missing_requirements":record["missing_requirements"]}
+        next_tasks = list(review.repair_tasks)
+        # Every unmet recorded requirement is reconsidered, even if the small model omitted repair_tasks.
+        missing_ids = {c.requirement_id for c in unmet}
+        for r in ledger.requirements:
+            if r["requirement_id"] in missing_ids or r["status"] == "pending":
+                for sid in r["server_ids"]:
+                    if r["information_ids"]:
+                        next_tasks.append(TaskSpec(server_id=sid, goal=r["description"][:200], information_ids=r["information_ids"]))
+        if next_tasks:
+            try:
+                await collect(TaskPlan(tasks=next_tasks[:12]))
+            except ValueError as exc:
+                ledger.note("answer_repair", str(exc))
+                limitations.append(str(exc))
+        emit("AnswerRepair", attempt=repair+1, reason=review.rewrite_instructions or "미충족 요구에 필요한 조회·계산·설명 보완")
     emit("InvestigationTasks", tasks=tasks)
-    return finish(render_answer(tasks, evidence, hypotheses, limitations))
+    emit("RequestRequirements", **ledger.payload())
+    return finish(draft())

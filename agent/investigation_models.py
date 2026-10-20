@@ -5,6 +5,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field
 
 from .request_ledger import RequirementSpec
+from .answer_contracts import AnswerStatement, Calculation, RequirementCheck
 
 
 class TaskSpec(BaseModel):
@@ -30,6 +31,16 @@ class Hypothesis(BaseModel):
 class InvestigationReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
     hypotheses: list[Hypothesis] = Field(max_length=2)
+    answers: list[AnswerStatement] = Field(default_factory=list, max_length=8)
+    calculations: list[Calculation] = Field(default_factory=list, max_length=8)
+
+
+class AnswerReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    checks: list[RequirementCheck] = Field(max_length=32)
+    missing_requirements: list[RequirementSpec] = Field(default_factory=list, max_length=8)
+    repair_tasks: list[TaskSpec] = Field(default_factory=list, max_length=8)
+    rewrite_instructions: str = Field(default="", max_length=1000)
 
 
 INSTRUCTIONS = {
@@ -53,8 +64,28 @@ CPU 과다 시 process와 log.content, 메모리 부족 시 memory.detail/proces
 디스크 부족 시 log.usage/log.files/log.content를 검토하되 요청 목적에 필요한 것만 선택하라.
 정상 상태 조회에 무관한 조사를 추가하지 마라. targets 안의 서버만 사용하라.
 고정된 명령어 목록을 만들지 말고 정보 ID를 선택하라. JSON 객체만 출력하라.""",
-    "report": """관측 사실에 근거한 원인 후보를 한국어 JSON으로 작성하라.
-형식: {"hypotheses":[{"text":"...일 가능성이 있습니다", "evidence_ids":["e1"],
+    "final_review": """원래 질문 query와 실제 답변 draft_answer를 대조하라. JSON만 반환한다.
+1. requirements의 모든 requirement_id를 checks에서 하나씩 판정한다.
+2. 답변에 요구한 값/계산/비교/설명/후보가 실제 있으면 satisfied, 빠지면 unmet이다.
+3. status는 satisfied 또는 unmet만 사용한다. 요구한 정보가 unavailable/unsupported/failed라면 그 한계를 답변에 정확히 안내했을 때 satisfied, 안내가 빠졌으면 unmet이다.
+information_ready는 정보가 확보됐다는 뜻이다. 답변이 실제 요구를 충족했는지만 판정한다. 미지원 여부는 코드가 별도로 처리한다.
+4. 현재 값으로 과거 시점/추세/배포 관계를 주장하면 unmet이다. 대상·단위·시점이 맞아야 한다.
+5. query의 요구가 목록에서 빠졌으면 missing_requirements에 추가한다.
+6. 추가 조회는 repair_tasks(server_id,goal,information_ids), 다시 쓸 내용은 rewrite_instructions에 쓴다. 확보된 정보는 다시 조회하지 않는다.
+출력: {"checks":[{"requirement_id":"r1","status":"satisfied 또는 unmet","reason":"판정 이유"}],
+"missing_requirements":[],"repair_tasks":[],"rewrite_instructions":""}.
+missing_requirements 항목은 description,server_ids,information_ids,kind다. 현재 targets만 사용한다.
+requirement_issues의 과거 미충족 기록이 실제 답변에서 해결됐는지도 확인한다.""",
+    "report": """원래 query를 충족하는 한국어 답변을 JSON으로 작성하라.
+requirements와 requirement_issues를 먼저 대조하여 계산·비교·설명 요구를 빠뜨리지 마라. 이전 final_feedback가 있으면 반드시 고려하라.
+answers에는 {text, requirement_ids, evidence_ids, quotes} 형태의 직접 답변을 넣어라. 원문에 있는 수치만 text에 써라.
+계산은 직접 숫자를 만들어 text에 쓰지 말고 calculations에 맡겨라. 항목은 label, requirement_ids, operation(sum/difference/product/ratio/percent),
+operands:[{evidence_id,information_id,field}], output_unit(native/B/KiB/MiB/GiB/%/percentage_points/ratio)다.
+field는 facts.fields의 경로(예: entries.0.rss_kib). difference/ratio/percent는 앞 값과 뒤 값을 순서대로 계산한다.
+메모리 단위 환산은 sum의 피연산자1개와 output_unit을 사용한다. 페이지 수 환산은 product에 페이지 수와 실제 page_size_bytes를 참조한다.
+코드가 계산·단위 변환·공식·출처를 검증하고 렌더링한다. 계산이 필요 없으면 calculations=[]이다.
+원인 분석 요청일 때만 관측 사실에 근거한 원인 후보를 hypotheses에 작성하라.
+hypotheses 형식: {"hypotheses":[{"text":"...일 가능성이 있습니다", "evidence_ids":["e1"],
 "quotes":["해당 evidence quote_candidates에서 복사한 정확한 한 줄"]}]}.
 사실과 후보를 구분하라. 원인을 확정하거나 조회하지 않은 사실의 부재를 단정하지 마라.
 가장 강한 근거가 있는 후보 하나를 우선하라. 정상 지표인 영역을 원인 후보로 나열하지 마라. 로그 용량이 크더라도 디스크 전체를 모두 차지했다고 과장하지 마라. 단일 표본으로 증가·감소·추세를 주장하지 마라. 수치를 새로 만들지 마라. 후보마다 유효한 evidence ID와 실제 원문 인용이 필요하다. quotes는 quote_candidates의 한 줄을 그대로 복사하라. 여러 줄을 합치거나 공백·수치를 고치지 마라.
@@ -67,7 +98,13 @@ CPU 과다 시 process와 log.content, 메모리 부족 시 memory.detail/proces
 def fake_decision(purpose: str, payload: dict) -> dict:
     """Deterministic test backend. Real backends always use their model."""
     if purpose == "report":
-        return {"hypotheses": []}
+        return {"hypotheses": [], "answers": [], "calculations": []}
+    if purpose == "final_review":
+        return {"checks": [{"requirement_id": r["requirement_id"],
+                            "status": "satisfied" if r["status"] in {"information_ready", "unsupported", "failed"} else "unmet",
+                            "reason": "오프라인 테스트: 정보 상태 기반 검토"}
+                           for r in payload["requirements"]],
+                "missing_requirements": [], "repair_tasks": [], "rewrite_instructions": ""}
     query = payload["query"].lower()
     tasks = []
     for server_id in payload["targets"]:

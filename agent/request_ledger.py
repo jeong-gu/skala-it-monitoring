@@ -32,6 +32,8 @@ class RequestLedger:
             data["information_ids"] = sorted(set(data["information_ids"]))
             if any(all(r[k] == data[k] for k in data) for r in self.requirements):
                 continue
+            if len(self.requirements) >= 32:
+                raise ValueError("요구사항 기록 한도에 도달했습니다.")
             self.requirements.append({**data, "requirement_id": f"r{len(self.requirements)+1}",
                                       "status": "pending", "reason": "아직 답변 충족 여부를 확인하지 않았습니다.",
                                       "history": [{"stage": stage, "status": "pending", "reason": "요구사항 등록"}]})

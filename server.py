@@ -119,6 +119,7 @@ def _metadata(result: dict, run_id: str | None) -> dict:
         "validation_attempts": result.get("validation_attempts", 0),
         "cost_usd": result.get("cost_usd", 0.0),
         "command_call_count": result.get("command_call_count", 0),
+        "final_validation": result.get("final_validation", {}),
         "llm_backend": app.state.llm_backend,
         "supervisor_version": app.state.deps.version,
         "instance_id": app.state.instance_id,
@@ -146,8 +147,8 @@ async def _handle_chat(message: str, thread_id: str) -> tuple[dict, str | None]:
 async def chat(req: ChatRequest):
     result, run_id = await _handle_chat(req.message, req.thread_id)
     return {"reply": result["final"], "events": result.get("events", []),
-            "metadata": _metadata(result, run_id),
-            **{k: result.get(k, []) for k in ("tasks", "evidence", "hypotheses", "limitations", "requirements", "requirement_issues")}}
+            "metadata": _metadata(result, run_id), "final_validation": result.get("final_validation", {}),
+            **{k: result.get(k, []) for k in ("tasks", "evidence", "hypotheses", "limitations", "requirements", "requirement_issues", "answers", "calculation_results", "final_reviews")}}
 
 
 @app.get("/chat/stream")
@@ -170,7 +171,8 @@ async def chat_stream(message: str, thread_id: str = "default"):
             seen = 0
             seen_event_ids = set()
             final = ""
-            investigation = {k: [] for k in ("tasks", "evidence", "hypotheses", "limitations", "requirements", "requirement_issues")}
+            investigation = {k: [] for k in ("tasks", "evidence", "hypotheses", "limitations", "requirements", "requirement_issues", "answers", "calculation_results", "final_reviews")}
+            final_validation = {}
             last_prompt = None   # finalize까지 살아남은 최종 write/chat 호출의 실제 프롬프트
             # stream_mode를 리스트로 주면 (mode, payload) 튜플이 나온다 — "updates"는
             # 노드가 끝날 때마다의 상태 델타, "custom"은 write_node/chat_answer_node가
@@ -195,10 +197,12 @@ async def chat_stream(message: str, thread_id: str = "default"):
                         final = delta["final"]
                     if delta.get("last_prompt"):
                         last_prompt = delta["last_prompt"]
+                    if "final_validation" in delta:
+                        final_validation = delta["final_validation"]
                     for key in investigation:
                         if key in delta:
                             investigation[key] = delta[key]
-            yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': final, 'prompt': last_prompt, **investigation}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': final, 'prompt': last_prompt, 'final_validation': final_validation, **investigation}, ensure_ascii=False)}\n\n"
             deps.session_store.append(thread_id, "user", message)
             deps.session_store.append(thread_id, "assistant", final)
         yield "data: [DONE]\n\n"

@@ -71,6 +71,10 @@ class AgentState(TypedDict, total=False):
     evidence: list[dict]
     hypotheses: list[dict]
     limitations: list[str]
+    answers: list[dict]
+    calculation_results: list[dict]
+    final_reviews: list[dict]
+    final_validation: dict
     requirements: list[dict]
     requirement_issues: list[dict]
     command_call_count: int

@@ -259,7 +259,10 @@ class LocalRoundTripTests(unittest.TestCase):
             "message": "서버 B가 느린데 원인을 확인해줘", "thread_id": "natural-task-tests",
         }, timeout=10, trust_env=False).json()
         self.assertTrue(all(t["status"] == "obtained" for t in body["tasks"]))
-        self.assertEqual({e["command_id"] for e in body["evidence"]}, {"top", "free", "ps", "tail"})
+        self.assertEqual({e["command_id"] for e in body["evidence"]}, {"top", "ps", "tail"})
+        self.assertIn("memory.summary", {f["information_id"] for e in body["evidence"] for f in e["facts"]})
+        self.assertTrue(body["requirements"])
+        self.assertIn(body["final_validation"]["status"], {"passed", "partial"})
         self.assertIn("96.0%", body["reply"])
         self.assertTrue(body["limitations"])
         self.assertEqual(len({(e["server_id"], e["command_id"]) for e in body["evidence"]}), len(body["evidence"]))
@@ -276,6 +279,9 @@ class LocalRoundTripTests(unittest.TestCase):
         final = next(e for e in events if e["type"] == "FinalAnswer")
         self.assertEqual({e["command_id"] for e in final["evidence"]}, {"df", "du", "ls", "tail"})
         self.assertTrue(final["tasks"])
+        self.assertTrue(final["requirements"])
+        self.assertIn("status", final["final_validation"])
+        self.assertTrue(any(e["type"] == "FinalAnswerValidation" for e in events))
         self.assertIn("No space left on device", final["reply"])
 
     def test_followup_uses_database_session_target(self):
