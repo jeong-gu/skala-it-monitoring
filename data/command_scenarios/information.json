@@ -1,0 +1,224 @@
+[
+  {
+    "information_id": "system",
+    "name": "시스템",
+    "description": "OS·커널·아키텍처",
+    "fields": {
+      "all": {
+        "os": "text",
+        "kernel": "text",
+        "architecture": "text"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "uname"
+      ],
+      "macos": [
+        "uname"
+      ]
+    },
+    "limitations": ""
+  },
+  {
+    "information_id": "cpu",
+    "name": "CPU",
+    "description": "시스템 사용자·커널·유휴 비율과 부하",
+    "fields": {
+      "all": {
+        "user_percent": "%",
+        "system_percent": "%",
+        "idle_percent": "%",
+        "load_average": "load"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "top"
+      ],
+      "macos": [
+        "top"
+      ]
+    },
+    "limitations": "두 번째 표본 사용. 프로세스 CPU와 다름. 코어 수 없이 Load Average만으로 과부하 확정 불가."
+  },
+  {
+    "information_id": "process",
+    "name": "프로세스",
+    "description": "제공된 프로세스별 PID·PPID·이름·CPU·메모리·RSS",
+    "fields": {
+      "all": {
+        "pid": "id",
+        "ppid": "id",
+        "name": "text",
+        "cpu_percent": "% (코어 합산)",
+        "memory_percent": "%",
+        "rss_kib": "KiB"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "ps"
+      ],
+      "macos": [
+        "ps"
+      ]
+    },
+    "limitations": "프로세스 CPU는 100%를 넘을 수 있음. 목록만으로 서비스 응답 정상 여부 확인 불가."
+  },
+  {
+    "information_id": "memory.summary",
+    "name": "메모리 요약",
+    "description": "OS별 물리 메모리 사용량",
+    "fields": {
+      "linux": {
+        "total_mib": "MiB",
+        "used_mib": "MiB",
+        "free_mib": "MiB",
+        "available_mib": "MiB"
+      },
+      "macos": {
+        "used_mib": "MiB",
+        "unused_mib": "MiB"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "free"
+      ],
+      "macos": [
+        "top"
+      ]
+    },
+    "limitations": "Linux available과 macOS unused는 같은 지표가 아님. 단일 표본으로 누수 확정 불가."
+  },
+  {
+    "information_id": "memory.detail",
+    "name": "메모리 상세",
+    "description": "Linux Swap 또는 macOS 페이지·압축 통계",
+    "fields": {
+      "linux": {
+        "swap_total_mib": "MiB",
+        "swap_used_mib": "MiB",
+        "swap_free_mib": "MiB"
+      },
+      "macos": {
+        "page_size_bytes": "bytes",
+        "free_pages": "pages",
+        "active_pages": "pages",
+        "wired_pages": "pages",
+        "compressor_pages": "pages"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "free"
+      ],
+      "macos": [
+        "vm_stat"
+      ]
+    },
+    "limitations": "macOS 페이지 수는 헤더의 페이지 크기와 함께 해석. Swap과 페이지 통계는 직접 비교 불가."
+  },
+  {
+    "information_id": "disk",
+    "name": "디스크",
+    "description": "제공된 파일시스템 용량과 사용률",
+    "fields": {
+      "all": {
+        "filesystem": "text",
+        "total": "표시 단위",
+        "used": "표시 단위",
+        "available": "표시 단위",
+        "usage_percent": "%",
+        "mount": "path"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "df"
+      ],
+      "macos": [
+        "df"
+      ]
+    },
+    "limitations": ""
+  },
+  {
+    "information_id": "network",
+    "name": "네트워크",
+    "description": "제공된 소켓·포트·관련 프로세스",
+    "fields": {
+      "all": {
+        "entries": "원문 행"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "ss"
+      ],
+      "macos": [
+        "lsof"
+      ]
+    },
+    "limitations": "소켓 정보만으로 RTT, 패킷 손실, 외부 서비스 응답·연결 성공을 확정할 수 없음."
+  },
+  {
+    "information_id": "log.files",
+    "name": "로그 파일",
+    "description": "등록된 로그 경로의 파일명·크기·수정 시각",
+    "fields": {
+      "all": {
+        "entries": "원문 행"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "ls"
+      ],
+      "macos": [
+        "ls"
+      ]
+    },
+    "limitations": "파일 목록은 로그 내용이 아님. /var/log/만 제공."
+  },
+  {
+    "information_id": "log.usage",
+    "name": "로그 저장량",
+    "description": "등록된 로그 디렉터리의 사용량",
+    "fields": {
+      "all": {
+        "size_kib": "KiB",
+        "path": "path"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "du"
+      ],
+      "macos": [
+        "du"
+      ]
+    },
+    "limitations": "/var/log/만 제공. 다른 디렉터리 사용량은 알 수 없음."
+  },
+  {
+    "information_id": "log.content",
+    "name": "애플리케이션 로그",
+    "description": "등록된 application.log의 최근 메시지·오류·시각",
+    "fields": {
+      "all": {
+        "lines": "최근 최대 100줄의 원문"
+      }
+    },
+    "commands_by_os": {
+      "linux": [
+        "tail"
+      ],
+      "macos": [
+        "tail"
+      ]
+    },
+    "limitations": "최근 최대 100줄의 모의 발췌. 전체 파일·전체 기간·오류 없음의 증거가 아님."
+  }
+]

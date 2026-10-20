@@ -32,6 +32,12 @@ async def _local_request(method: str, path: str, **kwargs):
 
 
 @mcp.tool()
+async def list_server_information() -> list[dict]:
+    """서버 정보 항목 ID·필드·단위·OS별 조회 방법·확인 한계를 조회합니다."""
+    return await _local_request("GET", "/monitoring/information")
+
+
+@mcp.tool()
 async def list_command_servers() -> list[dict]:
     """로컬 명령어 시나리오에 등록된 서버 ID, 이름, OS를 조회합니다."""
     return await _local_request("GET", "/monitoring/servers")

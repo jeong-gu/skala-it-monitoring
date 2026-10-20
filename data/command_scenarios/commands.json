@@ -3,84 +3,151 @@
     {
       "command_id": "uname",
       "command": "uname -a",
-      "description": "OS와 호스트 정보"
+      "description": "OS와 호스트 정보",
+      "information_ids": [
+        "system"
+      ]
     },
     {
       "command_id": "top",
       "command": "top -b -n 2 -d 1",
-      "description": "CPU·메모리·프로세스 종합 상태. 두 번째 표본을 사용합니다."
+      "description": "CPU·메모리·프로세스 종합 상태. 두 번째 표본을 사용합니다.",
+      "information_ids": [
+        "cpu",
+        "memory.summary"
+      ]
     },
     {
       "command_id": "free",
       "command": "free -m",
-      "description": "메모리와 Swap 사용량(MiB)"
+      "description": "메모리와 Swap 사용량(MiB)",
+      "information_ids": [
+        "memory.summary",
+        "memory.detail"
+      ]
     },
     {
       "command_id": "ps",
       "command": "ps -eo pid,ppid,comm,pcpu,pmem,rss",
-      "description": "프로세스별 CPU·메모리·RSS(KiB)"
+      "description": "프로세스별 CPU·메모리·RSS(KiB)",
+      "information_ids": [
+        "process"
+      ]
     },
     {
       "command_id": "df",
       "command": "df -h",
-      "description": "파일시스템 용량과 사용률"
+      "description": "파일시스템 용량과 사용률",
+      "information_ids": [
+        "disk"
+      ]
     },
     {
       "command_id": "ls",
       "command": "ls -lah /var/log/",
-      "description": "로그 디렉터리 목록과 파일 크기"
+      "description": "로그 디렉터리 목록과 파일 크기",
+      "information_ids": [
+        "log.files"
+      ]
     },
     {
       "command_id": "du",
       "command": "du -sk /var/log/",
-      "description": "로그 디렉터리 사용량(KiB)"
+      "description": "로그 디렉터리 사용량(KiB)",
+      "information_ids": [
+        "log.usage"
+      ]
     },
     {
       "command_id": "ss",
       "command": "ss -tunap",
-      "description": "TCP·UDP 소켓과 프로세스"
+      "description": "TCP·UDP 소켓과 프로세스",
+      "information_ids": [
+        "network"
+      ]
+    },
+    {
+      "command_id": "tail",
+      "command": "tail -n 100 /var/log/application.log",
+      "description": "등록된 애플리케이션 로그의 최근 최대 100줄. 전체 기간을 대표하지 않습니다.",
+      "information_ids": [
+        "log.content"
+      ]
     }
   ],
   "macos": [
     {
       "command_id": "uname",
       "command": "uname -a",
-      "description": "OS와 호스트 정보"
+      "description": "OS와 호스트 정보",
+      "information_ids": [
+        "system"
+      ]
     },
     {
       "command_id": "top",
       "command": "top -l 2 -n 10",
-      "description": "CPU·물리 메모리·프로세스 상태. 첫 표본의 프로세스 CPU는 판단에 사용하지 않습니다."
+      "description": "CPU·물리 메모리·프로세스 상태. 첫 표본의 프로세스 CPU는 판단에 사용하지 않습니다.",
+      "information_ids": [
+        "cpu",
+        "memory.summary"
+      ]
     },
     {
       "command_id": "vm_stat",
       "command": "vm_stat",
-      "description": "가상 메모리 페이지 통계. 헤더의 페이지 크기를 사용합니다."
+      "description": "가상 메모리 페이지 통계. 헤더의 페이지 크기를 사용합니다.",
+      "information_ids": [
+        "memory.detail"
+      ]
     },
     {
       "command_id": "ps",
       "command": "ps -axo pid,ppid,comm,%cpu,%mem,rss",
-      "description": "프로세스별 CPU·메모리·RSS(KiB)"
+      "description": "프로세스별 CPU·메모리·RSS(KiB)",
+      "information_ids": [
+        "process"
+      ]
     },
     {
       "command_id": "df",
       "command": "df -h",
-      "description": "파일시스템 용량과 사용률"
+      "description": "파일시스템 용량과 사용률",
+      "information_ids": [
+        "disk"
+      ]
     },
     {
       "command_id": "ls",
       "command": "ls -lah /var/log/",
-      "description": "로그 디렉터리 목록과 파일 크기"
+      "description": "로그 디렉터리 목록과 파일 크기",
+      "information_ids": [
+        "log.files"
+      ]
     },
     {
       "command_id": "du",
       "command": "du -sk /var/log/",
-      "description": "로그 디렉터리 사용량(KiB)"
+      "description": "로그 디렉터리 사용량(KiB)",
+      "information_ids": [
+        "log.usage"
+      ]
     },
     {
       "command_id": "lsof",
       "command": "lsof -nP -i",
-      "description": "네트워크 파일·포트와 프로세스"
+      "description": "네트워크 파일·포트와 프로세스",
+      "information_ids": [
+        "network"
+      ]
+    },
+    {
+      "command_id": "tail",
+      "command": "tail -n 100 /var/log/application.log",
+      "description": "등록된 애플리케이션 로그의 최근 최대 100줄. 전체 기간을 대표하지 않습니다.",
+      "information_ids": [
+        "log.content"
+      ]
     }
   ]
 }

@@ -44,6 +44,11 @@
       "stdout": "Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\ntcp   LISTEN 0      511    0.0.0.0:8080       0.0.0.0:*         users:((\"app-worker\",pid=2140,fd=7))\n",
       "stderr": "",
       "exit_code": 0
+    },
+    "tail": {
+      "stdout": "2026-10-20T11:59:00+09:00 INFO service ready port=8080\n2026-10-20T12:00:00+09:00 INFO request completed status=200\n",
+      "stderr": "",
+      "exit_code": 0
     }
   }
 }

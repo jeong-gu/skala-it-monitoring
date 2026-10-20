@@ -41,7 +41,12 @@
       "exit_code": 0
     },
     "lsof": {
-      "stdout": "COMMAND    PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\napp-worker 2140 app  7u IPv4 0x123  0t0 TCP *:8080 (LISTEN)\n",
+      "stdout": "COMMAND    PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nbatch-worker 2140 app  7u IPv4 0x123  0t0 TCP *:8080 (LISTEN)\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "tail": {
+      "stdout": "2026-10-20T11:59:00+09:00 INFO service ready port=8080\n2026-10-20T11:59:30+09:00 INFO batch-worker started job=report-export pid=2140\n2026-10-20T12:00:00+09:00 WARN request processing delayed while batch job running\n",
       "stderr": "",
       "exit_code": 0
     }

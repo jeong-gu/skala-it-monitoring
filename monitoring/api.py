@@ -14,6 +14,16 @@ class CommandDefinition(BaseModel):
     command_id: str
     command: str
     description: str
+    information_ids: list[str]
+
+
+class InformationDefinition(BaseModel):
+    information_id: str
+    name: str
+    description: str
+    fields: dict[str, dict[str, str]]
+    commands_by_os: dict[str, list[str]]
+    limitations: str = ""
 
 
 class SavedOutput(BaseModel):
@@ -60,6 +70,22 @@ class ScenarioStore:
             os_name: [CommandDefinition.model_validate(c) for c in commands]
             for os_name, commands in catalog.items()
         }
+        self.information = [InformationDefinition.model_validate(i) for i in
+                            json.loads((directory / "information.json").read_text())]
+        ids = {i.information_id for i in self.information}
+        if len(ids) != len(self.information):
+            raise ValueError("Duplicate information ID")
+        for os_name, commands in self.catalog.items():
+            by_id = {c.command_id: c for c in commands}
+            if len(by_id) != len(commands):
+                raise ValueError("Duplicate command ID")
+            for command in commands:
+                if not set(command.information_ids) <= ids:
+                    raise ValueError(f"Undefined information: {command.command_id}")
+            for information in self.information:
+                for command_id in information.commands_by_os.get(os_name, []):
+                    if command_id not in by_id or information.information_id not in by_id[command_id].information_ids:
+                        raise ValueError(f"Invalid information-command mapping: {information.information_id}")
         self.servers: dict[str, ServerScenario] = {}
         for path in sorted(directory.glob("server-*.json")):
             server = ServerScenario.model_validate_json(path.read_text())
@@ -68,6 +94,8 @@ class ScenarioStore:
             supported = {c.command_id for c in self.catalog[server.os]}
             if set(server.commands) != supported:
                 raise ValueError(f"Command catalog mismatch: {path.name}")
+            if len(server.commands["tail"].stdout.splitlines()) > 100:
+                raise ValueError(f"Tail scenario exceeds 100 lines: {path.name}")
             if server.observed_at.utcoffset() is None:
                 raise ValueError(f"Timezone required: {path.name}")
             self.servers[server.server_id] = server
@@ -113,6 +141,11 @@ class ScenarioStore:
 def create_router(store: ScenarioStore | None = None) -> APIRouter:
     store = store if store is not None else ScenarioStore()
     router = APIRouter(prefix="/monitoring", tags=["Local command scenarios"])
+
+    @router.get("/information", response_model=list[InformationDefinition])
+    async def list_information():
+        """확인 가능한 서버 정보, 단위, OS별 명령과 한계를 제공합니다."""
+        return store.information
 
     @router.get("/servers", response_model=list[ServerInfo])
     async def list_servers():
