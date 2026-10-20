@@ -71,6 +71,8 @@ class AgentState(TypedDict, total=False):
     evidence: list[dict]
     hypotheses: list[dict]
     limitations: list[str]
+    requirements: list[dict]
+    requirement_issues: list[dict]
     command_call_count: int
 
 

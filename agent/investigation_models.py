@@ -4,6 +4,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .request_ledger import RequirementSpec
+
 
 class TaskSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -15,6 +17,7 @@ class TaskSpec(BaseModel):
 class TaskPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tasks: list[TaskSpec] = Field(max_length=12)
+    requirements: list[RequirementSpec] = Field(default_factory=list, max_length=16)
 
 
 class Hypothesis(BaseModel):
@@ -32,6 +35,8 @@ class InvestigationReport(BaseModel):
 INSTRUCTIONS = {
     "plan": """서버 조사 계획을 JSON으로 작성하라. tasks 배열의 각 항목은
 server_id, goal(한국어 조사 목적), information_ids(확인할 정보 ID 목록)이다.
+requirements 배열에 원래 질문에서 반드시 답해야 하는 요구를 각각 기록하라. 각 항목은 description, server_ids, information_ids, kind(lookup/calculation/comparison/diagnosis/explanation)이다.
+조회 task와 별개로 계산·비교·원인 후보·확인 불가능한 요청도 빠뜨리지 마라. 요구한 시점/기간은 description에 보존하라.
 명령어를 직접 생성하지 말고 제공된 정보 ID를 선택하라. targets의 모든 서버를 포함하라.
 CPU면 cpu, 프로세스면 process, 메모리면 memory.summary/memory.detail,
 디스크면 disk, 소켓이면 network, 로그 내용이면 log.content,

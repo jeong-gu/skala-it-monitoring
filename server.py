@@ -147,7 +147,7 @@ async def chat(req: ChatRequest):
     result, run_id = await _handle_chat(req.message, req.thread_id)
     return {"reply": result["final"], "events": result.get("events", []),
             "metadata": _metadata(result, run_id),
-            **{k: result.get(k, []) for k in ("tasks", "evidence", "hypotheses", "limitations")}}
+            **{k: result.get(k, []) for k in ("tasks", "evidence", "hypotheses", "limitations", "requirements", "requirement_issues")}}
 
 
 @app.get("/chat/stream")
@@ -170,7 +170,7 @@ async def chat_stream(message: str, thread_id: str = "default"):
             seen = 0
             seen_event_ids = set()
             final = ""
-            investigation = {k: [] for k in ("tasks", "evidence", "hypotheses", "limitations")}
+            investigation = {k: [] for k in ("tasks", "evidence", "hypotheses", "limitations", "requirements", "requirement_issues")}
             last_prompt = None   # finalize까지 살아남은 최종 write/chat 호출의 실제 프롬프트
             # stream_mode를 리스트로 주면 (mode, payload) 튜플이 나온다 — "updates"는
             # 노드가 끝날 때마다의 상태 델타, "custom"은 write_node/chat_answer_node가

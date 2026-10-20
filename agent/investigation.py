@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from monitoring.api import CommandResult
 from monitoring.evidence import extract_facts
 from .investigation_models import InvestigationReport, TaskPlan, TaskSpec
+from .request_ledger import RequestLedger, RequirementSpec
 
 MAX_ROUNDS = 3
 MAX_COMMAND_CALLS = 12
@@ -149,6 +150,7 @@ async def investigate(state, deps):
     planner = getattr(deps, "monitoring_llm", None) or deps.fast_llm
     events = list(state.get("events", []))
     evidence, tasks, limitations, hypotheses = [], [], [], []
+    ledger = RequestLedger()
     cost, prompt, calls, rounds = state.get("cost_usd", 0), None, 0, 0
     try:
         writer = get_stream_writer()
@@ -165,7 +167,7 @@ async def investigate(state, deps):
         return {"final": text, "tasks": tasks, "evidence": evidence, "hypotheses": hypotheses,
                 "limitations": list(dict.fromkeys(limitations)), "events": events, "cost_usd": round(cost, 6),
                 "replan_rounds": max(0, rounds - 1), "command_call_count": calls,
-                "last_prompt": prompt}
+                "last_prompt": prompt, **ledger.payload()}
 
     async def ask(model, purpose, payload, contract, check=None):
         nonlocal cost, prompt
@@ -190,6 +192,7 @@ async def investigate(state, deps):
                 return answer
             except (ValueError, ValidationError) as exc:
                 payload["validation_feedback"] = str(exc)[:500]
+                ledger.note(purpose, str(exc)[:500])
             except Exception:
                 # Do not leak provider credentials or request headers in errors.
                 raise ValueError(f"{purpose} 모델 호출 실패") from None
@@ -273,6 +276,10 @@ async def investigate(state, deps):
             if iid not in selected_ids:
                 plan.tasks.append(TaskSpec(server_id=sid, goal=goal, information_ids=[iid]))
 
+    ledger.add(plan.requirements or [RequirementSpec(
+        description=t.goal, server_ids=[t.server_id], information_ids=t.information_ids)
+        for t in plan.tasks], targets, "plan")
+
     def add_tasks(plan):
         for spec in plan.tasks:
             if spec.server_id not in targets:
@@ -290,6 +297,8 @@ async def investigate(state, deps):
                 if e["server_id"] == spec.server_id and any(f["information_id"] in spec.information_ids for f in e["facts"])))
             task_status(task, evidence, information, catalogs)
             tasks.append(task)
+        ledger.sync(tasks, evidence, "collection")
+        emit("RequestRequirements", **ledger.payload())
         emit("InvestigationTasks", tasks=json.loads(json.dumps(tasks, ensure_ascii=False)))
 
     attempted = set()
@@ -355,6 +364,7 @@ async def investigate(state, deps):
             plan = await ask(planner, "review", {
                 **base, "tasks": tasks, "obtained_information": obtained,
                 "evidence": [{k: e[k] for k in ("evidence_id", "server_id", "command_id", "facts", "error")} for e in evidence],
+                **ledger.payload(),
             }, TaskPlan, review_check)
             # Reuse all available facts, even ones incidentally returned by a command.
             for spec in plan.tasks:
@@ -377,6 +387,8 @@ async def investigate(state, deps):
         elif e["exit_code"] != 0:
             limitations.append(f"{e['server_id']} · {e['command_id']} 종료 코드 {e['exit_code']}: {e['stderr']}")
 
+    ledger.sync(tasks, evidence, "collection_complete")
+    emit("RequestRequirements", **ledger.payload())
     raw_only = bool(re.search(r"json\s*만|원문\s*만", query, re.I))
     if raw_only:
         results = [{k: v for k, v in e.items() if k not in {"facts", "evidence_id"} and (k != "error" or v)} for e in evidence]
@@ -400,7 +412,7 @@ async def investigate(state, deps):
                                "evidence": [{"evidence_id": e["evidence_id"], "server_id": e["server_id"], "command_id": e["command_id"],
                                              "facts": [{"information_id": f["information_id"], "fields": f["fields"]} for f in e["facts"]],
                                              "quote_candidates": [line for line in e["stdout"].splitlines() if line.strip()]} for e in evidence],
-                               "tasks": tasks}, InvestigationReport,
+                               "tasks": tasks, **ledger.payload()}, InvestigationReport,
                                checked_report)
             hypotheses = [h.model_dump() for h in report.hypotheses]
         except ValueError as exc:
