@@ -81,6 +81,23 @@ class CompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(r["final_reviews"]),3)
         self.assertTrue(all(c["checks"][0]["status"]=="unmet" for c in r["final_reviews"]))
 
+    async def test_direct_answer_may_use_only_its_own_source_verified_calculation(self):
+        calc=dict(label="비율 차이",requirement_ids=["r1"],operation="difference",
+                  operands=[dict(evidence_id="e1",information_id="cpu",field=f) for f in ["user_percent","system_percent"]],output_unit="native")
+        answer=dict(text="비율 차이는 13퍼센트포인트입니다",requirement_ids=["r1"],evidence_ids=["e1"],quotes=["16.0 us"])
+        r=await self.run_flow([req("cpu",kind="calculation")],Model(final_review=[review(chk("r1"))]),
+            writer=Model(report=[dict(hypotheses=[],calculations=[calc],answers=[answer])]))
+        self.assertEqual(r["final_validation"]["status"],"passed")
+        self.assertEqual(float(r["calculation_results"][0]["value"]),13)
+        self.assertIn(answer["text"],r["final"])
+
+    async def test_midchain_support_tasks_do_not_become_new_user_requirements(self):
+        r=await self.run_flow([req("cpu")],Model(final_review=[review(chk("r1"))]),
+            reviews=[dict(tasks=[task("server-a","process")],requirements=[req("process",kind="diagnosis")]),dict(tasks=[])])
+        self.assertEqual(len(r["requirements"]),1)
+        self.assertEqual(r["requirements"][0]["information_ids"],["cpu"])
+        self.assertEqual(r["final_validation"]["status"],"passed")
+
     async def test_gate_detects_requirement_omitted_by_planner(self):
         fast=Model(final_review=[review(chk("r1"),missing=[req("process")],tasks=[task("server-a","process")]),
                                  review(chk("r1"),chk("r2"))])

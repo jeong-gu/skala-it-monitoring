@@ -76,8 +76,11 @@ class RequestLedger:
         by_id = {r["requirement_id"]: r for r in self.requirements}
         for check in checks:
             r = by_id[check.requirement_id]
+            reason = ("최종 검토에서 요청한 답변의 충족을 확인했습니다." if check.status == "satisfied" else check.reason)
             self.update(r, "satisfied" if check.status == "satisfied" else
-                        (r["status"] if check.status == "unavailable" else "needs_more"), check.reason, stage)
+                        (r["status"] if check.status == "unavailable" else "needs_more"), reason, stage)
+            # Preserve the model's literal reason separately from the user-facing state label.
+            r["review_reason"] = check.reason
         satisfied = {r["requirement_id"] for r in self.requirements if r["status"] == "satisfied"}
         for issue in self.issues:
             if issue["requirement_ids"] and set(issue["requirement_ids"]) <= satisfied:

@@ -90,7 +90,7 @@ def task_status(task, evidence, information, catalogs):
                       "needs_more" if values != {"pending"} else "pending")
 
 
-def verify_report(report, evidence):
+def verify_report(report, evidence, calculated_numbers=()):
     by_id = {e["evidence_id"]: e for e in evidence}
     for hypothesis in report.hypotheses:
         if not set(hypothesis.evidence_ids) <= by_id.keys():
@@ -102,6 +102,7 @@ def verify_report(report, evidence):
             raise ValueError("Hypothesis refers to a different server")
         allowed_numbers = {Decimal(n) for n in re.findall(r"\d+(?:\.\d+)?", " ".join(
             e["stdout"] + " " + " ".join(f["summary"] for f in e["facts"]) for e in selected))}
+        allowed_numbers.update(Decimal(str(n)) for n in calculated_numbers)
         if not {Decimal(n) for n in re.findall(r"\d+(?:\.\d+)?", hypothesis.text)} <= allowed_numbers:
             raise ValueError("Unsupported number in hypothesis")
         facts = [f for e in selected for f in e["facts"]]
@@ -301,7 +302,8 @@ async def investigate(state, deps):
         for t in plan.tasks], targets, "plan")
 
     def add_tasks(plan):
-        ledger.add(plan.requirements, targets, "review")
+        # Investigation steps support the original request; only the initial plan and
+        # final query comparison may register user requirements.
         for spec in plan.tasks:
             if spec.server_id not in targets:
                 raise ValueError("요청하지 않은 서버의 task")
@@ -446,8 +448,11 @@ async def investigate(state, deps):
             for a in report.answers:
                 if not set(a.requirement_ids) <= set(ids):raise ValueError("알 수 없는 답변 요구사항 ID")
                 # Exact sources/numbers are checked here; semantic scope is checked by final_review.
+                verified_numbers = [c["value"] for c in computed
+                                    if set(c["evidence_ids"]) <= set(a.evidence_ids)
+                                    and set(c["requirement_ids"]) & set(a.requirement_ids)]
                 verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"requirement_ids"})]),
-                              evidence)
+                              evidence, calculated_numbers=verified_numbers)
             valid, rejected = [], 0
             for item in report.hypotheses:
                 try:
