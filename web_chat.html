@@ -105,6 +105,18 @@
         </div>
       </details>
 
+      <details v-else-if="item.kind === 'requirements' && item.requirements.length" class="prompt-box" open>
+        <summary>요청 충족 확인 · {{ item.validation?.status === 'passed' ? '충족 확인' : item.validation?.status === 'unverified' ? '검증 미완료' : '확인 중·미충족 포함' }}</summary>
+        <div v-for="r in item.requirements" :key="r.requirement_id" style="padding:10px 12px;border-top:1px solid #3a3a52">
+          <strong>{{ r.description }}</strong>
+          <div>{{ statusLabel(r.status) }} · {{ r.reason }}</div>
+          <details><summary>확인 이력</summary><div v-for="(h, i) in r.history" :key="i">{{ statusLabel(h.status) }}: {{ h.reason }}</div></details>
+        </div>
+        <details v-if="item.issues.length"><summary>중간에 확인된 미충족 사항</summary>
+          <div v-for="g in item.issues" :key="g.issue_id" style="padding:6px 12px">{{ g.resolved ? '해결' : '기록' }} · {{ g.reason }}</div>
+        </details>
+      </details>
+
       <div v-else-if="item.kind === 'evidence'">
         <details v-for="e in item.evidence" :key="e.evidence_id" class="prompt-box" style="margin:6px 0">
           <summary>{{ e.evidence_id }} · {{ e.server_id }} · {{ e.command }} · 원문 근거</summary>
@@ -135,6 +147,8 @@ const { createApp, ref, reactive, nextTick } = Vue;
 const STEP_LABELS = {
   RequirementsIdentified: e => `조사 대상 확인: ${e.targets.join(', ')}`,
   CommandSelected: e => `${e.server_id}: ${e.command} 선택 (${e.information_ids.join(', ')})`,
+  FinalAnswerValidation: e => e.status === 'passed' ? '원래 요청에 대한 답변 충족 확인' : '최종 검토: 미충족·확인 불가 항목 확인',
+  AnswerRepair: e => `부족한 정보·설명 보완 (${e.attempt}회)`,
   InvestigationReview: e => `결과 검토 후 추가 Task ${e.additional_task_count}개 계획`,
   CommandCompleted: e => `${e.server_id}: ${e.command} 조회 완료 (종료 코드 ${e.exit_code})`,
   PlanCreated: e => `계획 수립: 할 일 ${e.task_count}가지${e.targets?.length ? ` (시스템: ${e.targets.join(', ')})` : ''}`,
@@ -157,7 +171,7 @@ createApp({
     const logEl = ref(null);
     const thread = 't-web-' + Math.random().toString(36).slice(2, 8);
     let nextId = 0;
-    const statusLabel = status => ({pending:'미조회',obtained:'정보 확보',needs_more:'추가 확인 필요',failed:'조회 실패',unsupported:'미지원'}[status] || status);
+    const statusLabel = status => ({pending:'미조회',obtained:'정보 확보',needs_more:'추가 확인 필요',failed:'조회 실패',unsupported:'미지원',information_ready:'정보 확보·답변 확인 대기',satisfied:'답변 충족'}[status] || status);
 
     fetch('/health').then(r => r.json()).then(h => {
       backendLabel.value = `${h.llm_backend} 실모델(${h.fast_llm}/${h.quality_llm}) · all_total_vue`;
@@ -181,6 +195,8 @@ createApp({
       log.value.push(stepsItem);
       const tasksItem = reactive({ id: nextId++, kind: 'investigation', tasks: [] });
       log.value.push(tasksItem);
+      const requirementsItem = reactive({id:nextId++,kind:'requirements',requirements:[],issues:[],validation:null});
+      log.value.push(requirementsItem);
       scrollToBottom();
 
       const url = `/chat/stream?message=${encodeURIComponent(text)}&thread_id=${encodeURIComponent(thread)}`;
@@ -194,6 +210,13 @@ createApp({
         let e;
         try { e = JSON.parse(event.data); } catch { return; }
 
+        if (e.type === 'RequestRequirements') {
+          requirementsItem.requirements = e.requirements;
+          requirementsItem.issues = e.requirement_issues;
+          scrollToBottom();
+          return;
+        }
+        if (e.type === 'FinalAnswerValidation') requirementsItem.validation = e;
         if (e.type === 'InvestigationTasks') {
           tasksItem.tasks = e.tasks;
           scrollToBottom();
@@ -213,6 +236,9 @@ createApp({
 
         if (e.type === 'FinalAnswer') {
           gotFinal = true;
+          if (e.requirements) requirementsItem.requirements = e.requirements;
+          if (e.requirement_issues) requirementsItem.issues = e.requirement_issues;
+          if (e.final_validation) requirementsItem.validation = e.final_validation;
           if (!streamItem) {
             streamItem = reactive({ id: nextId++, kind: 'agent', text: '' });
             log.value.push(streamItem);
