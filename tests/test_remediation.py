@@ -1988,3 +1988,136 @@ class ResourceDiagnosisGroundingTests(unittest.TestCase):
                 ground_resource_assessment(a,evidence,r)
                 DiagnosisAssessment.model_validate(a.model_dump())
                 verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"symptom_observed","requirement_ids"})]),evidence)
+
+
+class MemoryProcessPresentationTests(unittest.IsolatedAsyncioTestCase):
+    def fixture(self):
+        from monitoring.api import ScenarioStore, CommandRequest
+        from monitoring.evidence import extract_facts
+        from agent.investigation import render_answer
+        e=ScenarioStore().result(CommandRequest(server_id="server-c",command="ps")).model_dump(mode="json")
+        e["stdout"]="PID PPID COMMAND %CPU %MEM RSS\n41 1 tiny 0.1 1.0 100\n42 1 largest 1.0 60.9 5111808\n43 1 medium 0.2 15.0 1000000\n44 1 other 0.1 3.0 200000\n"
+        e.update(evidence_id="e1",facts=extract_facts(e))
+        requirements=[dict(requirement_id="r1",kind="lookup",server_ids=["server-c"],information_ids=["process"],description="점유 프로세스",status="satisfied",reason=""),dict(requirement_id="r2",kind="diagnosis",server_ids=["server-c"],information_ids=["memory.summary"],description="메모리 원인 후보",status="information_ready",reason="")]
+        candidate=dict(text="PID 42 largest의 메모리 점유율 60.9%는 관측된 메모리 사용의 기여 후보입니다.",requirement_ids=["r2"],evidence_ids=["e1"],quotes=[e["stdout"].splitlines()[2]])
+        state=dict(query="현재 메모리 사용 비율과 점유 프로세스, 원인 후보",requirements=requirements,evidence=[e],hypotheses=[candidate],tasks=[dict(server_id="server-c",information_ids=["memory.summary","process"])])
+        state["final"]=render_answer([], [e], [candidate], ["단일 표본으로 누수 여부를 확인할 수 없습니다."])
+        return state
+
+    def layout(self, blocks, groups, count):
+        from agent.response_policy import Layout
+        optional={r["block_id"] for g in groups for r in g["rows"]}
+        chosen={r["block_id"] for g in groups for r in g["rows"][:count]}
+        sections={}
+        for b in blocks:
+            if b["block_id"] in optional and b["block_id"] not in chosen:continue
+            sections.setdefault(b["section"],[]).append(b["block_id"])
+        non_background=[i for k,ids in sections.items() if k!="배경" for i in ids]
+        return Layout(sections=[dict(title=k,block_ids=v) for k,v in sections.items()],summary_ids=non_background[:3])
+
+    def test_selected_process_count_is_flexible_and_rows_sort_by_memory(self):
+        from agent.response_policy import source_blocks,memory_process_groups,validate_layout,render_layout
+        state=self.fixture();blocks=source_blocks(state,"detailed");groups=memory_process_groups(blocks,state)
+        self.assertEqual([r["pid"] for r in groups[0]["rows"]],[42,43,44,41])
+        self.assertIn("조회된 프로세스 목록 기준", " ".join(b["text"] for b in blocks))
+        for count in (2,4):
+            layout=self.layout(blocks,groups,count)
+            validate_layout(layout,blocks,"detailed",groups)
+            text=render_layout(layout,blocks,"detailed",groups).split("**요약**")[0]
+            self.assertLess(text.index("PID 42 largest:"),text.index("PID 43 medium:"))
+            self.assertEqual("PID 41 tiny:" in text,count==4)
+            self.assertTrue(all("r1" in b["requirement_ids"] and "e1" in b["evidence_ids"] for b in blocks if b["block_id"] in {r["block_id"] for r in groups[0]["rows"]}))
+
+    def test_cannot_omit_all_processes_candidate_or_source_blocks(self):
+        from agent.response_policy import source_blocks,memory_process_groups,validate_layout
+        state=self.fixture();blocks=source_blocks(state,"detailed");groups=memory_process_groups(blocks,state)
+        for count,remove in [(0,None),(2,"원인"),(2,"미확인 사항")]:
+            layout=self.layout(blocks,groups,count)
+            if remove:layout.sections=[s for s in layout.sections if s.title!=remove]
+            with self.assertRaises(ValueError):validate_layout(layout,blocks,"detailed",groups)
+        layout=self.layout(blocks,groups,2);layout.sections[0].block_ids.append("invented")
+        with self.assertRaises(ValueError):validate_layout(layout,blocks,"detailed",groups)
+
+    def test_cause_process_must_be_visible_and_summary_cannot_revive_omitted_rows(self):
+        from agent.response_policy import source_blocks,memory_process_groups,validate_layout
+        state=self.fixture();blocks=source_blocks(state,"detailed");groups=memory_process_groups(blocks,state)
+        layout=self.layout(blocks,groups,2);largest=groups[0]["rows"][0]["block_id"]
+        for s in layout.sections:s.block_ids=[i for i in s.block_ids if i!=largest]
+        with self.assertRaises(ValueError):validate_layout(layout,blocks,"detailed",groups)
+        layout=self.layout(blocks,groups,2);layout.summary_ids[0]=groups[0]["rows"][-1]["block_id"]
+        with self.assertRaises(ValueError):validate_layout(layout,blocks,"detailed",groups)
+
+    def test_cpu_only_scope_does_not_enable_optional_memory_rows(self):
+        from agent.response_policy import source_blocks,memory_process_groups
+        state=self.fixture();state["requirements"][1]["information_ids"]=["cpu"]
+        self.assertEqual(memory_process_groups(source_blocks(state,"detailed"),state),[])
+
+    async def test_existing_formatter_selects_rows_without_an_extra_model_call(self):
+        from agent.response_policy import present_response,memory_process_groups
+        state=self.fixture();state.update(route="commands",response_style="detailed",events=[],cost_usd=0)
+        owner=self
+        class Formatter:
+            name="process-selector"
+            calls=0
+            def response_json(self,purpose,payload,schema):
+                self.calls+=1
+                self.assert_payload=payload
+                return json.dumps(owner.layout(payload["blocks"],payload["process_groups"],2).model_dump()),{"usd":0}
+        model=Formatter();result=await present_response(state,SimpleNamespace(quality_llm=model))
+        self.assertEqual(result["presentation"]["status"],"formatted")
+        self.assertEqual(model.calls,1)
+        self.assertIn("PID 42 largest:",result["final"])
+        self.assertNotIn("PID 41 tiny:",result["final"])
+        self.assertTrue(result["requirement_coverage"]["r1"]["block_ids"])
+
+    def test_memory_diagnosis_fallback_reports_missing_work_instead_of_generic_caution(self):
+        from agent.investigation import render_answer
+        state=self.fixture();r=state["requirements"]
+        text=render_answer([],state["evidence"],[],[],requirements=r)
+        self.assertIn("원인 후보 설명을 완성하지 못했습니다",text)
+        self.assertNotIn("확보한 정보만으로 원인을 확정하지 않습니다",text)
+        text=render_answer([],[],[],[],requirements=r)
+        self.assertIn("프로세스 점유 정보를 확보하지 못했습니다",text)
+
+
+    def test_identical_process_rows_on_two_targets_keep_separate_sources(self):
+        from copy import deepcopy
+        from agent.response_policy import source_blocks,memory_process_groups,validate_layout
+        from agent.investigation import render_answer
+        state=self.fixture();other=deepcopy(state["evidence"][0]);other.update(server_id="server-g",evidence_id="e2")
+        state["evidence"].append(other)
+        for r in state["requirements"]:r["server_ids"].append("server-g")
+        state["final"]=render_answer([],state["evidence"],state["hypotheses"],[])
+        blocks=source_blocks(state,"detailed");groups=memory_process_groups(blocks,state)
+        self.assertEqual(len(groups),2)
+        self.assertFalse({r["block_id"] for r in groups[0]["rows"]}&{r["block_id"] for r in groups[1]["rows"]})
+        for g in groups:
+            expected="e1" if g["server_id"]=="server-c" else "e2"
+            self.assertTrue(all(b["evidence_ids"]==[expected] for b in blocks if b["block_id"] in {r["block_id"] for r in g["rows"]}))
+        layout=self.layout(blocks,groups,2);validate_layout(layout,blocks,"detailed",groups)
+
+    def test_absent_symptom_does_not_become_a_generation_failure(self):
+        from agent.investigation import render_answer
+        state=self.fixture()
+        text=render_answer([],state["evidence"],[],[],requirements=state["requirements"],
+            assessments=[dict(requirement_ids=["r2"],symptom_observed=False)])
+        self.assertIn("현재 관측에서 확인되지 않았습니다",text)
+        self.assertNotIn("완성하지 못했습니다",text)
+
+    async def test_format_schema_allows_four_rows_and_brief_subset(self):
+        from agent.response_policy import source_blocks,memory_process_groups,model_json,Layout,validate_layout
+        state=self.fixture();blocks=source_blocks(state,"detailed");groups=memory_process_groups(blocks,state)
+        layout=self.layout(blocks,groups,2)
+        selected=[i for s in layout.sections for i in s.block_ids]
+        class Formatter:
+            def response_json(self,purpose,payload,schema):
+                self.schema=schema
+                return json.dumps(dict(brief_ids=selected)),{"usd":0}
+        model=Formatter()
+        result,_,calls=await model_json(model,"format",dict(style="brief",blocks=blocks,process_groups=groups),Layout,
+            lambda value:validate_layout(value,blocks,"brief",groups))
+        self.assertEqual(calls,1)
+        prop=model.schema["properties"]["brief_ids"]
+        self.assertEqual(prop["maxItems"],len(blocks))
+        self.assertLess(prop["minItems"],len(blocks))
+        self.assertEqual(result.brief_ids,selected)

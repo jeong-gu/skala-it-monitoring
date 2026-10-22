@@ -443,11 +443,13 @@ def withdraw_absent_hypotheses(items, assessments):
     return retained
 
 
-def render_answer(tasks, evidence, hypotheses, limitations, answers=(), calculations=(), requirements=()):
+def render_answer(tasks, evidence, hypotheses, limitations, answers=(), calculations=(), requirements=(), *, diagnosis_requirements=None, assessments=()):
     lines = ["모의 시나리오의 저장된 출력 기준입니다. 실제 장비의 실시간 측정값은 아닙니다.", "", "확인한 사실"]
     for e in evidence:
         for fact in e["facts"]:
-            lines.append(f"- [{e['evidence_id']}] {e['server_id']} · {e['command']}: {fact['summary']}")
+            summaries = fact["summary"].splitlines() if fact["information_id"] == "process" else [fact["summary"]]
+            for summary in summaries:
+                lines.append(f"- [{e['evidence_id']}] {e['server_id']} · {e['command']}: {summary}")
     if not any(e["facts"] for e in evidence):
         lines.append("- 확인 가능한 정보를 확보하지 못했습니다.")
     if answers or calculations:
@@ -461,7 +463,17 @@ def render_answer(tasks, evidence, hypotheses, limitations, answers=(), calculat
         for item in hypotheses:
             lines.append(f"- {item['text']} (근거: {', '.join(item['evidence_ids'])})")
     else:
-        lines.append("- 확보한 정보만으로 원인을 확정하지 않습니다.")
+        memory_ids = {r["requirement_id"] for r in (requirements if diagnosis_requirements is None else diagnosis_requirements)
+                      if r["kind"] == "diagnosis" and {"memory.summary", "memory.detail"} & set(r["information_ids"])}
+        assessed = [a for a in (assessments or ()) if memory_ids & set(a["requirement_ids"])]
+        if memory_ids and assessed and all(not a["symptom_observed"] for a in assessed):
+            lines.append("- 요청한 메모리 증상은 현재 관측에서 확인되지 않았습니다. 위 관측과 확인 한계를 참고하세요.")
+        elif memory_ids:
+            has_process = any(f["information_id"] == "process" for e in evidence for f in e["facts"])
+            lines.append("- " + ("프로세스 점유 정보는 확보했지만, 원인 후보 설명을 완성하지 못했습니다. 점유 목록을 제시하며 원인 판단은 미완료로 남깁니다."
+                                 if has_process else "메모리 원인 후보를 설명할 프로세스 점유 정보를 확보하지 못했습니다. 프로세스 조회 결과를 추가로 확인해야 합니다."))
+        else:
+            lines.append("- 확보한 정보만으로 원인을 확정하지 않습니다.")
     unresolved = [f"{t['server_id']} · {t['goal']}: {i} ({s})" for t in tasks
                   for i, s in t["information_status"].items() if s != "obtained"]
     unresolved += [f"{r['description']}: {r['reason']}" for r in requirements
@@ -1357,7 +1369,7 @@ async def investigate(state, deps):
             if e.get("error") or e.get("exit_code") != 0:
                 note = f"{e['server_id']} · {e['command_id']} 조회 실패: {e.get('error') or e['stderr']}"
                 if note not in limitations:limitations.append(note)
-        return render_answer(tasks, evidence, hypotheses, limitations, answers, calculations, ledger.requirements if include_requirement_notes else ()) if targets else ""
+        return render_answer(tasks, evidence, hypotheses, limitations, answers, calculations, ledger.requirements if include_requirement_notes else (), diagnosis_requirements=ledger.requirements, assessments=diagnosis_assessments) if targets else ""
 
     feedback = None
     seen_review_states = set()

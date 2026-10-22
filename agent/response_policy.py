@@ -54,8 +54,9 @@ request_quote는 가능한 한 해당 kind에 해당하는 절만 인용한다. 
 현재 서버 수치·로그를 조회했다고 주장하거나 출처·조치 실행 결과를 만들지 마라. 대화 이력은 사용자 맥락일 뿐 실제 관측이 아니다.
 불필요한 도입·맺음말을 생략하라. 질문에서 더 구체적인 출력 형식을 요청하면 가능한 범위에서 따른다.""",
     "format": """검증된 blocks를 사용자의 요청에 맞는 최종 답변 형태로 배치하라. JSON만 반환한다.
-새 문장·수치·명령을 만들지 말고 block_id만 선택한다. 모든 blocks를 본문에 누락·중복 없이 포함한다.
-style=brief이면 brief_ids에 모든 ID를 읽기 좋은 순서로 나열하고 sections와 summary_ids는 비운다. 출력기는 이를 1~2줄로 압축한다.
+새 문장·수치·명령을 만들지 말고 block_id만 선택한다. process_groups의 프로세스 행은 질문과 점유 수치에 따라 필요한 만큼 선택한다. 개수를 3개 등으로 고정하지 말고, 전체 목록이나 개수를 명시한 요청은 그 범위를 지켜라. 각 그룹에서 최소 한 행과 required_ids의 행은 포함한다. 그 밖의 blocks는 본문에 누락·중복 없이 포함한다. 선택한 프로세스는 코드가 메모리 점유율 내림차순으로 배치한다.
+메모리 조사에서는 전체 사용량·계산 결과, 점유 프로세스, 원인 후보, 확인 한계 순서로 설명하라. 원인 후보를 한계 문구로 대체하지 마라.
+style=brief이면 brief_ids에 필수 ID와 선택한 프로세스 ID를 읽기 좋은 순서로 나열하고 sections와 summary_ids는 비운다. 출력기는 이를 1~2줄로 압축한다.
 style=detailed이면 sections에 title과 block_ids를 넣는다. 배경/원인/근거/요청 결과/대처방안/조치 전 확인/미확인 사항/출처 중 필요한 제목만 쓴다.
 각 block의 section을 그대로 지켜라. 원인 후보를 사실로 옮기거나 미확인 사항을 원인으로 바꾸지 마라.
 summary_ids에는 핵심 결론과 중요한 한계를 담는 ID 3~4개를 골라 마지막에 요약한다. 배경 block은 요약에서 제외한다.
@@ -242,10 +243,14 @@ async def model_json(model, purpose, payload, contract, check=None):
         schema["$defs"]["RequestedResult"]={"anyOf":[observation,action]}
     if purpose=="format":
         ids=[b["block_id"] for b in payload["blocks"]]
+        process_groups=payload.get("process_groups",[])
+        optional={r["block_id"] for g in process_groups for r in g["rows"]}
+        def minimum(members):
+            return len(set(members)-optional)+sum(max(1,len(g.get("required_ids",[]))) for g in process_groups if any(r["block_id"] in members for r in g["rows"]))
         properties=schema["properties"]
         if payload["style"]=="brief":
             properties.pop("sections");properties.pop("summary_ids")
-            properties["brief_ids"].update(minItems=len(ids),maxItems=len(ids))
+            properties["brief_ids"].update(minItems=minimum(ids),maxItems=len(ids))
             properties["brief_ids"]["items"]["enum"]=ids
             schema["required"]=["brief_ids"]
         else:
@@ -265,7 +270,7 @@ async def model_json(model, purpose, payload, contract, check=None):
                 "type":"object","properties":{
                     "title":{"type":"string","enum":[title]},
                     "block_ids":{"type":"array","items":{"type":"string","enum":members},
-                                 "minItems":len(members),"maxItems":len(members)}},
+                                 "minItems":minimum(members),"maxItems":len(members)}},
                 "required":["title","block_ids"],"additionalProperties":False}
                 for title,members in groups.items()]}
             schema["required"]=["sections","summary_ids"]
@@ -525,10 +530,14 @@ def bind_answer_blocks(blocks, state):
         block.update(requirement_ids=[],evidence_ids=[],step_ids=[],chunk_ids=[])
         text=block["text"]
         for evidence in state.get("evidence",[]):
-            if not any(f.get("summary") and f["summary"] in text for f in evidence.get("facts",[])):continue
+            matched = [f for f in evidence.get("facts",[]) if f.get("summary") and (
+                (f["information_id"] != "process" and f["summary"] in text) or
+                (f["information_id"] == "process" and text.startswith(f"[{evidence['evidence_id']}] ") and any(
+                    text.endswith(row) for row in f["summary"].splitlines())))]
+            if not matched:continue
             block["evidence_ids"].append(evidence["evidence_id"])
             for requirement in state.get("requirements",[]):
-                if requirement["kind"]=="lookup" and evidence["server_id"] in requirement["server_ids"] and any(f["information_id"] in requirement["information_ids"] and f.get("summary","") in text for f in evidence.get("facts",[])):
+                if requirement["kind"]=="lookup" and evidence["server_id"] in requirement["server_ids"] and any(f["information_id"] in requirement["information_ids"] for f in matched):
                     block["requirement_ids"]+=requirement["requirement_id"],
         for hypothesis in state.get("hypotheses", []):
             if hypothesis["text"] in text:
@@ -567,6 +576,37 @@ def single_server_text(text, state):
     return text
 
 
+def memory_process_groups(blocks, state):
+    """Offer only source-bound process rows, scoped to a typed memory request."""
+    from monitoring.evidence import extract_facts
+    targets = {sid for r in state.get("requirements",[]) if
+               {"memory.summary", "memory.detail"} & set(r.get("information_ids",[]))
+               for sid in r.get("server_ids",[])}
+    groups = {}
+    for evidence in state.get("evidence",[]):
+        sid = evidence["server_id"]
+        if sid not in targets:continue
+        for fact in extract_facts(evidence):
+            if fact["information_id"] != "process":continue
+            for row, summary in zip(fact["fields"]["entries"], fact["summary"].splitlines()):
+                # IDs and display values come from the raw command, never model prose.
+                block = next((b for b in blocks if b["section"] == "근거"
+                    and evidence["evidence_id"] in b.get("evidence_ids",[])
+                    and b["text"].endswith(summary)), None)
+                if not block:continue
+                group = groups.setdefault(sid, {"server_id":sid,"rows":[],"required_ids":[]})
+                group["rows"].append({"block_id":block["block_id"],"pid":row["pid"],
+                    "memory_percent":row["memory_percent"],"rss_kib":row["rss_kib"]})
+                identity = f"PID {row['pid']} {row['name']}"
+                if any(evidence["evidence_id"] in h.get("evidence_ids",[]) and identity in h["text"]
+                       for h in state.get("hypotheses",[])):
+                    group["required_ids"].append(block["block_id"])
+    for group in groups.values():
+        group["rows"].sort(key=lambda r:(-r["memory_percent"],-r["rss_kib"],r["pid"]))
+        group["required_ids"] = list(dict.fromkeys(group["required_ids"]))
+    return list(groups.values())
+
+
 def source_blocks(state, style):
     section, blocks = "요청 결과", []
     needed = {(t["server_id"], i) for t in state.get("tasks", []) for i in t.get("information_ids", [])}
@@ -589,18 +629,28 @@ def source_blocks(state, style):
     if style=="detailed":
         blocks.insert(0,{"block_id":"request", "section":"배경", "text":"요청: "+state["query"]})
     bound=bind_answer_blocks(blocks,state)
+    if memory_process_groups(bound,state):
+        bound += bind_answer_blocks([{"block_id":"process_scope","section":"근거",
+            "text":"조회된 프로세스 목록 기준입니다. 표시한 항목은 메모리 점유율 내림차순이며 전체 시스템의 모든 프로세스를 확인한 것은 아닙니다."},
+            {"block_id":"process_sample_limit","section":"미확인 사항",
+             "text":"단일 관측으로 정상적인 작업·캐시 사용과 메모리 누수를 구분할 수 없습니다."}],state)
     return [{**b,"text":single_server_text(b["text"],state)} if b["section"]!="배경" else b for b in bound]
 
 
-def validate_layout(layout, blocks, style):
+def validate_layout(layout, blocks, style, process_groups=()):
     by_id={b["block_id"]:b for b in blocks}
     ids=layout.brief_ids if style=="brief" else [i for s in layout.sections for i in s.block_ids]
-    if len(ids)!=len(set(ids)) or set(ids)!=set(by_id): raise ValueError("검증된 본문 block을 중복·누락 없이 포함하세요.")
+    optional={r["block_id"] for g in process_groups for r in g["rows"]}
+    required=(set(by_id)-optional) | {i for g in process_groups for i in g.get("required_ids",[])}
+    if len(ids)!=len(set(ids)) or not set(ids)<=set(by_id) or not required<=set(ids):
+        raise ValueError("검증된 필수 본문과 원인 후보의 프로세스 행을 중복·누락 없이 포함하세요.")
+    if any(not set(ids) & {r["block_id"] for r in g["rows"]} for g in process_groups):
+        raise ValueError("대상별로 조회된 프로세스를 최소 한 행 이상 선택하세요.")
     if style=="brief":
         if layout.sections or layout.summary_ids: raise ValueError("간단한 요청은 brief_ids만 사용하세요.")
     else:
         if layout.brief_ids or not 3<=len(layout.summary_ids)<=4: raise ValueError("복잡한 요청에는 마지막 요약 3~4개가 필요합니다.")
-        if not set(layout.summary_ids)<=set(by_id): raise ValueError("없는 요약 근거 ID")
+        if not set(layout.summary_ids)<=set(ids): raise ValueError("본문에서 선택하지 않은 요약 근거 ID")
         if len(set(layout.summary_ids))!=len(layout.summary_ids): raise ValueError("요약 중복")
         if len({s.title for s in layout.sections})!=len(layout.sections): raise ValueError("같은 항목은 한 섹션으로 묶으세요.")
         if any(by_id[i]["section"]=="배경" for i in layout.summary_ids): raise ValueError("요약에는 결과·한계를 선택하세요.")
@@ -608,15 +658,23 @@ def validate_layout(layout, blocks, style):
             if any(by_id[i]["section"]!=s.title for i in s.block_ids): raise ValueError("사실·원인·미확인 항목의 구분을 유지하세요.")
 
 
-def render_layout(layout, blocks, style):
+def render_layout(layout, blocks, style, process_groups=()):
     by_id={b["block_id"]:b for b in blocks}
+    def ordered(ids):
+        result=list(ids)
+        for group in process_groups:
+            ranked=[r["block_id"] for r in group["rows"] if r["block_id"] in result]
+            positions=[i for i,value in enumerate(result) if value in ranked]
+            for i,value in zip(positions,ranked):result[i]=value
+        return result
     if style=="brief":
+        layout=layout.model_copy(update={"brief_ids":ordered(layout.brief_ids)})
         main=[by_id[i]["text"] for i in layout.brief_ids if by_id[i]["section"] not in {"배경","미확인 사항","출처"}]
         notes=[by_id[i]["text"] for i in layout.brief_ids if by_id[i]["section"] in {"배경","미확인 사항","출처"}]
         return "\n".join("; ".join(items) for items in (main,notes) if items)
     lines=[]
     for s in layout.sections:
-        lines += [f"**{s.title}**"] + ["- "+by_id[i]["text"] for i in s.block_ids] + [""]
+        lines += [f"**{s.title}**"] + ["- "+by_id[i]["text"] for i in ordered(s.block_ids)] + [""]
     lines += ["**요약**"] + ["- "+by_id[i]["text"] for i in layout.summary_ids]
     return "\n".join(lines)
 
@@ -663,10 +721,11 @@ async def present_response(state, deps):
             blocks=source_blocks(state,style)
             if style=="detailed" and len([b for b in blocks if b["section"]!="배경"])<3:
                 style="brief";blocks=source_blocks(state,style)
+            process_groups=memory_process_groups(blocks,state)
             layout,used,calls=await model_json(deps.quality_llm,"format",{
-                "query":state["query"],"style":style,"blocks":[{k:b[k] for k in ("block_id","section","text")} for b in blocks]},Layout,
-                lambda value:validate_layout(value,blocks,style))
-            text=render_layout(layout,blocks,style)
+                "query":state["query"],"style":style,"process_groups":process_groups,"blocks":[{k:b[k] for k in ("block_id","section","text")} for b in blocks]},Layout,
+                lambda value:validate_layout(value,blocks,style,process_groups))
+            text=render_layout(layout,blocks,style,process_groups)
         # This is part of the final body submitted to whole-request validation.
         text=with_status_notice(single_server_text(text,state))
         cost+=used
