@@ -1,0 +1,131 @@
+[
+  {
+    "doc_id": "kernel-memory-control",
+    "os": "linux",
+    "product": "Linux cgroup v2",
+    "version": "source snapshot",
+    "portable": true,
+    "incident_types": [
+      "memory-pressure"
+    ],
+    "title": "Linux Kernel — cgroup v2 memory resource control",
+    "source_url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+    "collected_at": "2026-10-22T00:56:58.762997+00:00",
+    "sha256": "b478c1bae99899df476d6b4989cbb516f7ca93c5f009cdff64b802bbc24f3d4b",
+    "chunk_id": "kernel-memory-control:0:0",
+    "section": "memory.high",
+    "text": "A read-write single value file which exists on non-root cgroups. The default is “max”. Memory usage throttle limit. If a cgroup’s usage goes over the high boundary, the processes of the cgroup are throttled and put under heavy reclaim pressure. Going over the high limit never invokes the OOM killer and under extreme conditions the limit may be breached. The high limit should be used in scenarios where an external process monitors the limited cgroup to alleviate heavy reclaim pressure. If memory.high is opened with O_NONBLOCK then the synchronous reclaim is bypassed. This is useful for admin processes that need to dynamically adjust the job’s memory limits without expending their own CPU resources on memory reclamation. The job will trigger the reclaim and/or get throttled on its next charge request. Please note that with O_NONBLOCK, there is a chance that the target memory cgroup may take indefinite amount of time to reduce usage below the limit due to delayed charge request or busy-hitting its memory to slow down reclaim.",
+    "token_count": 252
+  },
+  {
+    "doc_id": "kernel-cpu-control",
+    "os": "linux",
+    "product": "Linux cgroup v2",
+    "version": "source snapshot",
+    "portable": true,
+    "incident_types": [
+      "cpu-spike"
+    ],
+    "title": "Linux Kernel — cgroup v2 cpu resource control",
+    "source_url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+    "collected_at": "2026-10-22T00:56:58.762997+00:00",
+    "sha256": "b478c1bae99899df476d6b4989cbb516f7ca93c5f009cdff64b802bbc24f3d4b",
+    "chunk_id": "kernel-cpu-control:0:0",
+    "section": "cpu.max",
+    "text": "A read-write two value file which exists on non-root cgroups. The default is “max 100000”. The maximum bandwidth limit. It’s in the following format: $MAX $PERIOD which indicates that the group may consume up to $MAX in each $PERIOD duration. “max” for $MAX indicates no limit. If only one number is written, $MAX is updated. This file affects only processes under the fair-class scheduler and a BPF scheduler with the cgroup_set_bandwidth callback depending on what the callback actually does.",
+    "token_count": 133
+  },
+  {
+    "doc_id": "kernel-cpu-control",
+    "os": "linux",
+    "product": "Linux cgroup v2",
+    "version": "source snapshot",
+    "portable": true,
+    "incident_types": [
+      "cpu-spike"
+    ],
+    "title": "Linux Kernel — cgroup v2 cpu resource control",
+    "source_url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+    "collected_at": "2026-10-22T00:56:58.762997+00:00",
+    "sha256": "b478c1bae99899df476d6b4989cbb516f7ca93c5f009cdff64b802bbc24f3d4b",
+    "chunk_id": "kernel-cpu-control:1:0",
+    "section": "cpu.idle",
+    "text": "A read-write single value file which exists on non-root cgroups. The default is 0. This is the cgroup analog of the per-task SCHED_IDLE sched policy. Setting this value to a 1 will make the scheduling policy of the cgroup SCHED_IDLE. The threads inside the cgroup will retain their own relative priorities, but the cgroup itself will be treated as very low priority relative to its peers. This file affects only processes under the fair-class scheduler and a BPF scheduler with the cgroup_set_idle callback depending on what the callback actually does.",
+    "token_count": 145
+  },
+  {
+    "doc_id": "logrotate",
+    "os": "linux",
+    "product": "logrotate",
+    "version": "source snapshot",
+    "portable": true,
+    "incident_types": [
+      "disk-full"
+    ],
+    "title": "logrotate — System log rotation manual",
+    "source_url": "https://raw.githubusercontent.com/logrotate/logrotate/main/logrotate.8.in",
+    "collected_at": "2026-10-20T07:24:40.644642+00:00",
+    "sha256": "e481384b3a46dbb09253076616353f50ddf0bc17c2b3e7ad60602969e804ed1d",
+    "chunk_id": "logrotate:0:0",
+    "section": "DESCRIPTION",
+    "text": "logrotate is designed to ease administration of systems that generate\nlarge numbers of log files.  It allows automatic rotation, compression,\nremoval, and mailing of log files.  Each log file may be handled daily,\nweekly, monthly, or when it grows too large.\n\nNormally, logrotate is run as a daily cron job (or by\nlogrotate.timer when using systemd(1)).  It will not modify\na log more than once in one day unless the criterion for that log is\nbased on the log's size and logrotate is being run more than once\neach day, or unless the -f or --force option is used.\n\nWhen a log file is encountered for the first time (that is, when it has\nno entry in the state file), logrotate records the current time as\nthe last rotation time.  As a result, time-based rotation criteria (such\nas daily, weekly, or monthly) may not be satisfied on\nthat first run.\n\nAny number of config files may be given on the command line.  Later config\nfiles may override the options given in earlier files, so the order\nin which the logrotate config files are listed is important.\nNormally, a single config file which includes any other config files\nwhich are needed should be used.  See below for more information on how\nto use the include directive to accomplish this.  If a directory\nis given on the command line, every file in that directory is used as\na config file.\n\nIf no command line arguments are given, logrotate will print\nversion and copyright information, along with a short usage summary.  If\nany errors occur while rotating logs, logrotate will exit with\nnon-zero status, although the state file will be updated.",
+    "token_count": 369
+  },
+  {
+    "doc_id": "apple-slow",
+    "os": "macos",
+    "product": "macOS",
+    "version": "source snapshot",
+    "portable": true,
+    "incident_types": [
+      "cpu-spike",
+      "memory-pressure",
+      "disk-full"
+    ],
+    "title": "Apple — If your Mac runs slowly",
+    "source_url": "https://support.apple.com/guide/mac-help/if-your-mac-runs-slowly-mchlp1731/mac",
+    "collected_at": "2026-10-20T07:24:42.059243+00:00",
+    "sha256": "a73f6465ac62b4ea168d7d308e0acd2468b04ebd08ddca33dfd2d8940676ed56",
+    "chunk_id": "apple-slow:0:0",
+    "section": "If your Mac runs slowly",
+    "text": "If you find your Mac is running slowly, there are a number of potential causes that you can check.\n\nYour computer’s startup disk may not have enough free disk space. To make disk space available, you can move files to another disk or an external storage device , then delete files you no longer need on the startup disk. macOS can also help you optimize storage by storing files in the cloud and helping you identify files you no longer need. Choose Apple menu > System Settings, then click General in the sidebar (you may need to scroll down). Click Storage on the right, then click the storage recommendations you want to use. Open Storage settings for me\n\nAn app you’re using may require more memory than your Mac has easily available. You can use Activity Monitor to see how much memory your Mac and apps are using. See View memory usage in Activity Monitor . Also see the documentation that came with the app to find out its system requirements. Open Activity Monitor for me\n\nQuit any app that isn’t compatible with your Mac. For example, an app may require a different processor or graphics card. See the documentation that came with the app for information about its system requirements. To see what processor your computer has, choose Apple menu > System Settings, click General in the sidebar, then click About on the right. Open About settings for me To see which graphics card your computer has, choose Apple menu > System Settings, then click General in the sidebar. Click About on the right, then click System Report. Click Graphics/Displays to see the name of the graphics card installed your computer. Open About settings for me\n\nQuit any apps you’re not using.\n\nIf you have problems with your disk , use Disk Utility to verify and try and fix any issues. Open Disk Utility for me",
+    "token_count": 392
+  },
+  {
+    "doc_id": "apple-storage",
+    "os": "macos",
+    "product": "macOS",
+    "version": "source snapshot",
+    "portable": true,
+    "incident_types": [
+      "disk-full"
+    ],
+    "title": "Apple — Free up storage space on Mac",
+    "source_url": "https://support.apple.com/102624",
+    "collected_at": "2026-10-20T07:24:42.871061+00:00",
+    "sha256": "70ea665e52d6b312bc0affd7699aa0ab403e4f077791622473b7f47ebda2f7ab",
+    "chunk_id": "apple-storage:3:0",
+    "section": "Move or delete files to free up storage space",
+    "text": "If you have another storage device, such as an external drive connected to your Mac, you can move files to that device. Media files such as photos and videos can use a lot of storage space, so you might want to move your Photos library or move your iMovie library , for example.\n\nDelete music , movies , podcasts , or other media, especially if it's media that you can stream or download again as needed.\n\nDelete files in your Downloads folder. Your can open the Downloads folder from the Dock, by clicking Downloads in the sidebar of a window in the Finder, or by choosing Go > Downloads from the menu bar in the Finder.\n\nIf you use the Mail app for email, choose Mailbox > Erase Junk Mail from the menu bar in Mail. Also choose Mailbox > Erase Deleted Items.\n\nIf you use your Mac to back up your iPhone or iPad, you can delete old backups .\n\nDelete or uninstall apps that you no longer use.\n\nIf your Mac is set up for multiple users, delete users that no longer need access to your Mac. Or ask them to follow the steps in this article after logging in to their user account.\n\nCheck the Users folder on Macintosh HD for any undeleted data belonging to deleted users, as well as any shared files that you no longer need to share.\n\nIf you don't want to delete certain files, you might be able to save space by compressing them . Then expand them when you need to use them again.\n\nEmpty your Trash. When you move a file to the Trash, its storage space doesn't become available until you empty the Trash .",
+    "token_count": 362
+  },
+  {
+    "doc_id": "apple-quit",
+    "os": "macos",
+    "product": "macOS",
+    "version": "source snapshot",
+    "portable": true,
+    "incident_types": [
+      "cpu-spike",
+      "memory-pressure"
+    ],
+    "title": "Apple — Quit an app or process in Activity Monitor on Mac",
+    "source_url": "https://support.apple.com/guide/activity-monitor/quit-a-process-actmntr1002/mac",
+    "collected_at": "2026-10-20T07:24:44.008116+00:00",
+    "sha256": "25949577dfebabe59904c0a164721096cfa828b5d88955996e89a06c2b6f6caa",
+    "chunk_id": "apple-quit:0:0",
+    "section": "Quit an app or process in Activity Monitor on Mac",
+    "text": "You can use Activity Monitor to quit a process, even if it’s in a loop or not responding. You can also send a signal to a process to terminate it. If you attempt to quit a process you don’t own, you may be required to authenticate as an administrator .\n\nOpen Activity Monitor for me\n\nIn the Activity Monitor app on your Mac, under the Process Name list, select the app or process you want to quit. An unresponsive process is marked with (Not Responding) and appears red. Note: The Process Name list is not available in the Cache tab listings.\n\nClick in the upper-left corner of the Activity Monitor window.\n\nChoose one of the following options: Quit: This is the same as choosing File > Quit within an app. The process quits when it’s safe to do so. If quitting the process could cause data loss or interfere with another app, the process doesn’t quit. Force Quit: The process quits immediately. If the process has files open, you may lose data. If the process is used by other apps or processes, those apps or processes could experience problems. To see if a process is used by another process, choose View > All Processes, Hierarchically.\n\nTo send a signal to a process, select it in the process list, choose View > Send Signal to Process, choose a signal from the pop-up menu, then click Send.",
+    "token_count": 311
+  }
+]

@@ -197,7 +197,7 @@ class LocalRoundTripTests(unittest.TestCase):
 
     def test_chat_graph_mcp_http_round_trip_preserves_json(self):
         response = httpx.post(self.base_url + "/chat", json={
-            "message": "서버 B top 조회해줘 JSON만", "thread_id": "local-command-tests",
+            "message": "서버 B top 조회해줘 JSON만", "thread_id": "local-command-tests", "scenario_id": "server-b",
         }, timeout=10, trust_env=False)
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -210,21 +210,21 @@ class LocalRoundTripTests(unittest.TestCase):
 
     def test_macos_chat_command(self):
         body = httpx.post(self.base_url + "/chat", json={
-            "message": "서버 G vm_stat 조회해줘 JSON만", "thread_id": "mac-command-tests",
+            "message": "서버 G vm_stat 조회해줘 JSON만", "thread_id": "mac-command-tests", "scenario_id": "server-g",
         }, timeout=10, trust_env=False).json()
         self.assertEqual(json.loads(body["reply"])["os"], "macos")
         self.assertIn("page size of 16384", json.loads(body["reply"])["stdout"])
 
-    def test_unknown_server_survives_mcp_error_as_clear_answer(self):
-        body = httpx.post(self.base_url + "/chat", json={
-            "message": "서버 Z top 조회해줘", "thread_id": "unknown-command-tests",
-        }, timeout=10, trust_env=False).json()
-        self.assertIn("server_not_found", body["reply"])
-        self.assertNotIn("auth-service", body["reply"])
+    def test_unknown_explicit_state_is_rejected_without_default_substitution(self):
+        response = httpx.post(self.base_url + "/chat", json={
+            "message": "top 조회해줘", "thread_id": "unknown-command-tests", "scenario_id": "server-z",
+        }, timeout=10, trust_env=False)
+        self.assertEqual(response.status_code,404)
+        self.assertEqual(response.json()["detail"]["code"],"server_not_found")
 
     def test_stream_completes_and_returns_same_raw_result(self):
         response = httpx.get(self.base_url + "/chat/stream", params={
-            "message": "서버 D df 조회해줘 JSON만", "thread_id": "stream-command-tests",
+            "message": "서버 D df 조회해줘 JSON만", "thread_id": "stream-command-tests", "scenario_id": "server-d",
         }, timeout=10, trust_env=False)
         events = [json.loads(line[6:]) for line in response.text.splitlines()
                   if line.startswith("data: ") and line != "data: [DONE]"]
@@ -240,13 +240,14 @@ class LocalRoundTripTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["metadata"]["route"], "chat")
 
-    def test_legacy_incident_pipeline_still_works(self):
+    def test_old_service_name_does_not_change_the_selected_host_state(self):
         response = httpx.post(self.base_url + "/chat", json={
-            "message": "auth-service 장애 원인 진단해줘", "thread_id": "legacy-incident-tests",
+            "message": "auth-service라는 이름을 썼었는데 지금 CPU 확인해줘", "thread_id": "legacy-incident-tests", "scenario_id": "server-b",
         }, timeout=10, trust_env=False)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["metadata"]["route"], "incident")
-        self.assertIn("CPU", response.json()["reply"])
+        self.assertEqual(response.json()["metadata"]["route"], "commands")
+        self.assertEqual({e["server_id"] for e in response.json()["evidence"]},{"server-b"})
+        self.assertIn("96.0%", response.json()["reply"])
 
     def test_information_catalog_is_available_over_http(self):
         response = httpx.get(self.base_url + "/monitoring/information", trust_env=False)
@@ -256,7 +257,7 @@ class LocalRoundTripTests(unittest.TestCase):
 
     def test_natural_language_investigation_has_tasks_and_raw_sources(self):
         body = httpx.post(self.base_url + "/chat", json={
-            "message": "서버 B가 느린데 원인을 확인해줘", "thread_id": "natural-task-tests",
+            "message": "서버 B가 느린데 원인을 확인해줘", "thread_id": "natural-task-tests", "scenario_id": "server-b",
         }, timeout=10, trust_env=False).json()
         self.assertTrue(all(t["status"] == "obtained" for t in body["tasks"]))
         self.assertEqual({e["command_id"] for e in body["evidence"]}, {"top", "ps", "tail"})
@@ -269,7 +270,7 @@ class LocalRoundTripTests(unittest.TestCase):
 
     def test_natural_language_sse_returns_unique_events_and_sources(self):
         response = httpx.get(self.base_url + "/chat/stream", params={
-            "message": "서버 D 디스크가 부족한 원인을 확인해줘", "thread_id": "natural-sse-tests",
+            "message": "서버 D 디스크가 부족한 원인을 확인해줘", "thread_id": "natural-sse-tests", "scenario_id": "server-d",
         }, timeout=10, trust_env=False)
         events = [json.loads(line[6:]) for line in response.text.splitlines()
                   if line.startswith("data: ") and line != "data: [DONE]"]
@@ -287,7 +288,7 @@ class LocalRoundTripTests(unittest.TestCase):
     def test_followup_uses_database_session_target(self):
         for query in ["서버 G CPU 확인", "그 서버의 메모리는?"]:
             response = httpx.post(self.base_url + "/chat", json={
-                "message": query, "thread_id": "followup-task-tests",
+                "message": query, "thread_id": "followup-task-tests", "scenario_id": "server-g",
             }, timeout=10, trust_env=False)
         evidence = response.json()["evidence"]
         self.assertTrue(evidence)
@@ -298,7 +299,7 @@ class LocalRoundTripTests(unittest.TestCase):
         async def run():
             async with httpx.AsyncClient(base_url=self.base_url, timeout=10, trust_env=False) as client:
                 return await asyncio.gather(*[
-                    client.post("/chat", json={"message": query, "thread_id": f"concurrent-{i}"})
+                    client.post("/chat", json={"message": query, "thread_id": f"concurrent-{i}", "scenario_id": ["server-b","server-g"][i]})
                     for i, query in enumerate(["서버 B top JSON만", "서버 G vm_stat JSON만"])
                 ])
         responses = asyncio.run(run())
@@ -309,3 +310,18 @@ class LocalRoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MCPTransportBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transport_errors_are_sanitized_and_cancellation_propagates(self):
+        from agent.mcp_client import call_tool_result, MCPToolError
+        from types import SimpleNamespace
+        import anyio
+        for error in (TimeoutError("private"), ConnectionError("private"), anyio.EndOfStream(), anyio.ClosedResourceError()):
+            async def broken(name, args): raise error
+            with self.assertRaises(MCPToolError) as caught:
+                await call_tool_result(SimpleNamespace(call_tool=broken), "get_command_result", {})
+            self.assertNotIn("private", str(caught.exception))
+        async def cancelled(name, args): raise asyncio.CancelledError()
+        with self.assertRaises(asyncio.CancelledError):
+            await call_tool_result(SimpleNamespace(call_tool=cancelled), "get_command_result", {})

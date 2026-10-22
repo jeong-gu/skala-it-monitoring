@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 
 import httpx
-from langsmith import traceable
+from langsmith import traceable, trace
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 
@@ -85,10 +85,74 @@ PLAN_SCHEMA = {
 }
 
 
+
+def trace_json_call(model, purpose, payload, call):
+    """Observe one provider call; tracing failures must never repeat inference."""
+    import sys
+    from datetime import datetime, timezone
+    from time import perf_counter
+    from .deps import REQUEST_TELEMETRY
+    telemetry = REQUEST_TELEMETRY.get()
+    started, clock = datetime.now(timezone.utc), perf_counter()
+    usage, succeeded = {}, False
+    manager = span = None
+    try:
+        manager = trace("llm." + purpose, run_type="llm",
+                        inputs={"model":model,"payload":payload},
+                        metadata={"purpose":purpose,"ls_model_name":model,
+                                  "attempt":2 if payload.get("validation_feedback") else 1})
+        span = manager.__enter__()
+    except Exception:
+        manager = None
+    try:
+        content, usage = call()
+        succeeded = True
+        if span is not None:
+            try:
+                measured={k:usage.get(k) for k in ("input_tokens","output_tokens")}
+                if all(v is not None for v in measured.values()):
+                    measured["total_tokens"] = sum(measured.values())
+                else:
+                    measured = {}
+                span.end(outputs={"content":content,"usage_metadata":measured,
+                                  "provider_timings_ms":usage.get("provider_timings_ms",{})})
+            except Exception:
+                pass
+        return content, usage
+    finally:
+        if telemetry is not None:
+            allowed = {"intent","direct","format","plan","review","report","final_review",
+                       "manual_summary","diagnostic_metrics","diagnostic_logs"}
+            metrics={"duration_ms":round((perf_counter()-clock)*1000,2),"success":int(succeeded)}
+            for key in ("input_tokens","output_tokens","usd"):
+                value=usage.get(key)
+                if isinstance(value,(int,float)) and not isinstance(value,bool):metrics[key]=value
+            telemetry.append({"purpose":purpose if purpose in allowed else "other", "start":started,
+                              "end":datetime.now(timezone.utc), "metrics":metrics})
+        if manager is not None:
+            try:manager.__exit__(*sys.exc_info())
+            except Exception:pass
+
+
 class OllamaLLM:
+    def diagnostic_json(self, payload: dict, schema: dict):
+        from .investigation_models import DIAGNOSTIC_INSTRUCTIONS
+        from .response_policy import sampling_schema
+        return trace_json_call(self.model, "diagnostic_"+payload["role"], payload,
+            lambda: self._chat(DIAGNOSTIC_INSTRUCTIONS, json.dumps(payload, ensure_ascii=False),
+                               schema=sampling_schema(schema), bounded=True))
+
+    def response_json(self, purpose: str, payload: dict, schema: dict):
+        from .response_policy import INSTRUCTIONS, sampling_schema
+        return trace_json_call(self.model, purpose, payload, lambda: self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), schema=sampling_schema(schema), bounded=True))
+
+    def remediation_json(self, payload: dict, schema: dict):
+        from remediation.model import INSTRUCTIONS
+        return trace_json_call(self.model, "manual_summary", payload, lambda: self._chat(INSTRUCTIONS, json.dumps(payload, ensure_ascii=False), schema=schema, bounded=True))
+
     def monitoring_json(self, purpose: str, payload: dict, schema: dict):
         from .investigation_models import INSTRUCTIONS
-        return self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), schema=schema, bounded=True)
+        return trace_json_call(self.model, purpose, payload, lambda: self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), schema=schema, bounded=True))
 
     def __init__(self, model: str, usd_per_1k_tokens: float):
         self.name = f"ollama:{model}"
@@ -116,6 +180,9 @@ class OllamaLLM:
         tokens = (data.get("prompt_eval_count") or 0) + (data.get("eval_count") or 0)
         usage = {"model": self.name, "tokens": tokens,
                  "usd": round(tokens / 1000 * self.usd_per_1k, 6)}
+        usage.update(input_tokens=data.get("prompt_eval_count"), output_tokens=data.get("eval_count"),
+                     provider_timings_ms={k.removesuffix("_duration"):data[k]/1e6
+                         for k in ("load_duration","prompt_eval_duration","eval_duration","total_duration") if data.get(k) is not None})
         return content, usage
 
     async def _chat_stream(self, system: str, user: str, on_token=None) -> tuple[str, dict]:

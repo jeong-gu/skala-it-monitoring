@@ -3,3 +3,5 @@
 session.db
 __pycache__/
 *.log
+.manual_cache/
+data/manual_index/

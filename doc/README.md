@@ -1,20 +1,25 @@
 # all_total_vue — 운영 인시던트 대응 에이전트 (Vue 프론트엔드 버전)
 
-## 정보 중심 서버 조사 추가
+## 현재 개선본의 범위
 
-기존 FastAPI의 `/monitoring` 경로와 MCP를 통해 서버 A~H의 Linux/macOS 명령어 출력 JSON을
-조회할 수 있다. 자연어 요청을 task·정보 ID로 나누고 OS별 명령을 선택하며 추가 조사와 원문 근거를 제공한다.
-채팅 예: `서버 B가 느린데 원인을 확인해줘`. [정보 중심 서버 조사 사용법](local_commands.md).
-실제 셸 실행과 외부 모니터링 서버 연결은 포함하지 않는다.
+프론트에서 A–H 중 **한 서버의 저장된 자원 상태 시나리오**를 선택한다. A와 B는 서로 다른 운영 서버가 아니다.
+예: B 상태를 선택하고 `현재 CPU 사용률과 높은 경우 원인 후보를 설명해줘`라고 요청한다.
+CPU·메모리·프로세스·디스크·네트워크·로그를 정보 ID로 계획하고, 등록된 OS별 명령 출력 JSON을 MCP와 로컬 FastAPI로 조회한다.
+실제 셸 실행·SSH·자동 복구는 포함하지 않는다. [조회 사용법](local_commands.md).
 
-`all_total`과 백엔드(server.py, agent/, mcp_server.py 등)는 완전히 동일하고, 브라우저
-채팅 화면(`web_chat.html`)만 바닐라 JS 대신 **Vue 3**(CDN 글로벌 빌드, 별도 빌드 단계
-없음)로 재작성한 버전이다. 나머지 설명은 원본 `all_total`과 같다.
+기존 스켈레톤의 FastAPI·Vue·MCP·LangGraph·DI·세션 기반을 확장한 버전이다.
+새 기능은 정보 중심 조사, 원문·계산 검증, 공식 매뉴얼 RAG, 메트릭·로그·매뉴얼 전문 서브그래프, 전체 요구 검증이다.
+메트릭·로그는 관측 판단과 추가 조회를, 매뉴얼은 검색·절차 선택·누락 주제 추가 검색을 자체 상태와 제한된 도구 범위 안에서 수행한다. 역할은 같은 모델을 공유하며 순차 실행한다.
+`fake`·`ollama`·`openai` 어댑터가 있으며 이번 개선 평가의 주 모델은 `gpt-4o-mini`다.
 
-Wave 1~15가 각각 증명한 패턴(싱글턴·MCP·SSE·라우팅·게이트·재계획·검증·재시도·병렬·비용분리·
-세션·주입·버전 토글·가드)을 전부 조립한 **실제 동작하는 에이전트 서비스**다. LLM 자리는
-`fake`(결정론)/`ollama`(로컬 실모델)/`openai`(실제 API) 세 백엔드 중 아무거나 꽂을 수 있고,
-요청 한 건이 처리되는 전 과정은 LangSmith에 계층 트리로 기록·평가·피드백된다.
+LangSmith 추적 기반은 스켈레톤에서 계승했다. POST·SSE는 공통 요청 root와 모델 호출을 숫자 지표로 기록한다.
+원문 자동 추적은 끄고 질문·답변·명령 결과는 전송하지 않는다. SSE 최종 metadata에도 요청 run ID를 제공한다.
+평가 산출물의 익명 case ID·측정값·점수 전송과 로컬 원문 증빙은 구분하며, 과거 평가를 최신 코드의 성능으로 사용하지 않는다.
+`cost_usd`는 설정 단가로 환산한 값이며 실제 공급자 청구 금액이 아니다. 실패한 형식 재시도의 알려진 사용량도 포함한다.
+
+v2 `/chat`과 SSE에는 `WORKFLOW_TIMEOUT_SECONDS`(기본 120초)의 전체 그래프 실행 제한이 적용된다.
+시간 초과 시 확보한 원문·검증된 답변·대처방안을 보존하고 `final_validation.status=unverified`로 반환한다.
+진행 중인 동기 HTTP 호출 스레드의 즉시 중단이나 과금 취소까지 보장하지는 않는다.
 
 ## 주요 실행 방법
 
@@ -43,7 +48,34 @@ LangSmith 프로젝트를 백엔드별로 분리해 기록한다(`capstone-all-t
 > 더 쉬운 설명과 실제 캡처 화면이 필요하면 [manual_ollma.md](manual_ollma.md)(로컬
 > 실모델) · [manual_openai.md](manual_openai.md)(OpenAI API)를 참고.
 
-## 아키텍처 구성도
+## 현재 조사·대처 경로
+
+```mermaid
+flowchart TD
+    UI["상태 시나리오 선택 + 자연어 질문"] --> API["FastAPI /chat 또는 /chat/stream"]
+    API --> Budget["요청별 시간 제한 + 진행 상태 보존"]
+    Budget --> Route["LLM 의도·요구사항 분류"]
+    Route -->|일반 설명| Direct["도구 없이 응답"]
+    Route -->|조회·원인·대처| Investigate["정보 ID → 지원 명령 계획"]
+    Investigate --> MCP["MCP → 로컬 FastAPI → 저장된 명령 출력 JSON"]
+    MCP --> Facts["원문·단위·수치 검증"]
+    Facts -->|원인 요청| Experts["메트릭 / 로그 전문 compiled subgraph"]
+    Experts -->|추가 정보| Investigate
+    Experts --> Compose["근거 있는 설명·원인 후보·계산"]
+    Facts --> Compose
+    Compose -->|대처 요청| Manuals["매뉴얼 전문 subgraph: 검색 → 선택 → 누락 주제 보완"]
+    Manuals --> Format["검증된 내용의 최종 배치"]
+    Compose --> Format
+    Format --> Review["실제 최종 본문 요구 충족 검증"]
+    Review -->|부족한 단계만 한도 내 보완| Investigate
+    Review --> Final["답변 + Task + 원문 근거 + 검증 상태"]
+```
+
+일반 조회는 전문 원인 판단을 강제하지 않고, 상태 전용 요청은 RAG를 호출하지 않는다.
+각 전문 역할은 자체 관측·판단·추가 조회 루프를 가지며, Supervisor가 전체 명령 중복 제거와 예산을 관리한다.
+한 역할의 실패가 다른 역할의 결과를 지우지 않는다. 아래 그림은 학습용으로 남겨 둔 기존 incident 경로다.
+
+## 최초 스켈레톤 incident 경로 참고
 
 ```mermaid
 flowchart TB
@@ -92,7 +124,7 @@ flowchart TB
     Deps --> LLM["fast_llm / quality_llm<br/>(fake · ollama · openai 중 택1)"]
     Deps --> Session["SqliteSessionStore<br/>(session.db)"]
 
-    Graph --> Trace["LangSmith<br/>(계층 트리 trace · Dataset 평가 · Feedback)"]
+    Graph --> Trace["LangSmith<br/>(요청·모델 숫자 추적 · 별도 평가)"]
 ```
 
 - **싱글턴**: `server.py`의 `lifespan`에서 `SupervisorDeps`(LLM·세션·MCP 연결)를 정확히
@@ -250,3 +282,15 @@ all_total_vue/
 │   ├── image_usecase/           # manual_ollma.md 캡처 이미지
 │   └── image_usecase_openai/    # manual_openai.md 캡처 이미지
 ```
+
+
+## 공식 매뉴얼 대처방안 RAG
+
+대처방안을 요청했을 때만 공식 Linux·macOS 매뉴얼을 의미 검색합니다. 준비·실행·검증 방법은 [공식 매뉴얼 RAG](remediation.md)를 참고하세요.
+
+요청별 도구 필요 여부와 간단/복잡 task의 최종 답변 형식은 [요청 분기·최종 출력](response_policy.md)을 참고하세요.
+
+
+### 프론트 시나리오 선택
+
+기존 실행 방법과 주소(백엔드 8100, 채팅 8600)를 사용한다. 화면 상단에서 **한 모니터링 서버의 자원 상태**를 선택한 뒤 `CPU 상태와 대처방안 알려줘`처럼 질문한다. A~H는 서로 다른 서버가 아니라 정상·CPU 부하·메모리 부족·디스크 부족과 OS 환경을 재현하는 상태 데이터다. 최초 화면과 scenario_id 없는 v2 요청은 기본 상태 A를 사용한다. 서버 이름을 지정할 필요가 없으며 질문의 예전 서버명은 선택 상태를 바꾸지 않는다. 시나리오를 바꾸면 새 대화를 시작한다. API 클라이언트는 `/chat` 본문 또는 `/chat/stream` 쿼리에 선택적인 `scenario_id`(예: `server-b`)를 전달할 수 있다. 선택 목록은 `GET /monitoring/scenarios`에서 조회한다. 선택하지 않은 기존 API 요청 형식은 계속 지원한다.

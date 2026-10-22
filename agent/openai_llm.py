@@ -6,10 +6,9 @@ quality(기본 gpt-4o)는 최종 답변 작성 전담. ollama_llm.py와 마찬�
 동작한다. Ollama와 달리 실제 과금이 발생하는 원격 API이므로, 이 백엔드로 실행하면
 OpenAI 계정에 실제 비용이 청구된다(run_openai.sh 실행 전 반드시 인지할 것).
 
-구조화 출력은 OpenAI Chat Completions의 `response_format={"type": "json_object"}`
-(JSON 모드)로 강제한다 — Ollama의 `format=<JSON Schema>`처럼 스키마 자체를 강제하는
-기능은 아니라서, 시스템 프롬프트에 원하는 필드를 명시하고 ollama_llm.py와 동일하게
-코드 레벨 방어(파싱 실패·필드 누락 시 보정)를 그대로 둔다.
+의도·조사·전문 진단·매뉴얼 선택·최종 형식은 strict json_schema를 사용한다.
+JSON 스키마 검증 뒤에도 프로그램의 대상·단위·계산·원문 출처 검증을 유지한다.
+레거시 인터페이스는 기존 JSON 모드와 파서를 유지한다.
 
 비용(cost_usd)은 OpenAI 응답의 `usage.total_tokens`(실측) × 가상 단가다 — 실제 청구
 금액과는 별개로, W10a의 모델 분리 효과를 fake/ollama와 같은 잣대로 비교하기 위함이다.
@@ -25,6 +24,7 @@ from pathlib import Path
 
 import httpx
 from langsmith import traceable
+from .ollama_llm import trace_json_call
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -73,29 +73,64 @@ PLAN_INSTRUCTIONS = (
 )
 
 
+def strict_json_schema(schema):
+    """Copy Pydantic's schema to the provider's closed, all-required subset."""
+    if isinstance(schema, list):
+        return [strict_json_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    result = {key: strict_json_schema(value) for key, value in schema.items() if key != "default"}
+    if result.get("type") == "object":
+        result["additionalProperties"] = False
+        result["required"] = list(result.get("properties", {}))
+    return result
+
+
 class OpenAILLM:
+    def diagnostic_json(self, payload: dict, schema: dict):
+        from .investigation_models import DIAGNOSTIC_INSTRUCTIONS
+        return trace_json_call(self.model, "diagnostic_"+payload["role"], payload,
+            lambda: self._chat(DIAGNOSTIC_INSTRUCTIONS, json.dumps(payload, ensure_ascii=False),
+                               json_mode=True, schema=schema, strict_schema=True))
+
+    def response_json(self, purpose: str, payload: dict, schema: dict):
+        from .response_policy import INSTRUCTIONS
+        return trace_json_call(self.model, purpose, payload, lambda: self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), json_mode=True, schema=schema, strict_schema=True))
+
+    def remediation_json(self, payload: dict, schema: dict):
+        from remediation.model import INSTRUCTIONS
+        return trace_json_call(self.model, "manual_summary", payload, lambda: self._chat(INSTRUCTIONS, json.dumps(payload, ensure_ascii=False), json_mode=True, schema=schema, strict_schema=True))
+
     def monitoring_json(self, purpose: str, payload: dict, schema: dict):
         from .investigation_models import INSTRUCTIONS
-        return self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), json_mode=True)
+        return trace_json_call(self.model, purpose, payload, lambda: self._chat(INSTRUCTIONS[purpose], json.dumps(payload, ensure_ascii=False), json_mode=True, schema=schema, strict_schema=True))
 
     def __init__(self, model: str, usd_per_1k_tokens: float):
         self.name = f"openai:{model}"
         self.model = model
         self.usd_per_1k = usd_per_1k_tokens
-        self.api_key = os.environ.get("OPENAI_API_KEY", "")
+        self.api_key = os.environ.get("OPENAI_API_KEY", "").strip()
 
-    def _chat(self, system: str, user: str, json_mode: bool = False) -> tuple[str, dict]:
+    def _chat(self, system: str, user: str, json_mode: bool = False, schema: dict | None = None, strict_schema: bool = False) -> tuple[str, dict]:
         if not self.api_key:
             raise RuntimeError(
                 "OPENAI_API_KEY가 설정되지 않았습니다 — .env 또는 환경변수로 지정하세요."
             )
+        if schema is not None:
+            # Strict schemas constrain shape; all callers still validate source semantics.
+            system += "\n출력 JSON 스키마를 준수하라: " + json.dumps(schema, ensure_ascii=False)
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
             "temperature": 0,
         }
-        if json_mode:
+        if strict_schema:
+            if schema is None:
+                raise ValueError("엄격한 출력 형식에는 JSON 스키마가 필요합니다.")
+            payload["response_format"] = {"type":"json_schema", "json_schema":{
+                "name":"agent_response", "strict":True, "schema":strict_json_schema(schema)}}
+        elif json_mode:
             payload["response_format"] = {"type": "json_object"}
         headers = {"Authorization": f"Bearer {self.api_key}",
                    "Content-Type": "application/json"}
@@ -106,6 +141,8 @@ class OpenAILLM:
         tokens = data.get("usage", {}).get("total_tokens", 0)
         usage = {"model": self.name, "tokens": tokens,
                  "usd": round(tokens / 1000 * self.usd_per_1k, 6)}
+        usage.update(input_tokens=data.get("usage",{}).get("prompt_tokens"),
+                     output_tokens=data.get("usage",{}).get("completion_tokens"))
         return content, usage
 
 

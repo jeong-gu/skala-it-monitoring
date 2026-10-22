@@ -1,0 +1,13 @@
+# If your Mac runs slowly
+
+If you find your Mac is running slowly, there are a number of potential causes that you can check.
+
+Your computer’s startup disk may not have enough free disk space. To make disk space available, you can move files to another disk or an external storage device , then delete files you no longer need on the startup disk. macOS can also help you optimize storage by storing files in the cloud and helping you identify files you no longer need. Choose Apple menu > System Settings, then click General in the sidebar (you may need to scroll down). Click Storage on the right, then click the storage recommendations you want to use. Open Storage settings for me
+
+An app you’re using may require more memory than your Mac has easily available. You can use Activity Monitor to see how much memory your Mac and apps are using. See View memory usage in Activity Monitor . Also see the documentation that came with the app to find out its system requirements. Open Activity Monitor for me
+
+Quit any app that isn’t compatible with your Mac. For example, an app may require a different processor or graphics card. See the documentation that came with the app for information about its system requirements. To see what processor your computer has, choose Apple menu > System Settings, click General in the sidebar, then click About on the right. Open About settings for me To see which graphics card your computer has, choose Apple menu > System Settings, then click General in the sidebar. Click About on the right, then click System Report. Click Graphics/Displays to see the name of the graphics card installed your computer. Open About settings for me
+
+Quit any apps you’re not using.
+
+If you have problems with your disk , use Disk Utility to verify and try and fix any issues. Open Disk Utility for me

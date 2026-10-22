@@ -1,0 +1,57 @@
+# Free up storage space on Mac
+
+Learn what to do if your Mac startup disk is almost full, or you don't have enough storage space to download, install, or copy.
+
+Find out how much storage space is available
+
+Optimize storage space
+
+Move or delete files to free up storage space
+
+Temporarily free up more storage space
+
+# Find out how much storage space is available
+
+In macOS Ventura 13 or later, choose System Settings from the Apple menu , click General in the sidebar, then click Storage on the right. (In earlier versions of macOS, choose About This Mac from the Apple menu , then click Storage.)
+
+The Storage information in System Settings shows how much storage space is used by various categories of files. As you take the steps in this article to free up storage space, this information updates automatically.
+
+If you see a More Info button next to a listed category, click it for more information and options for managing storage in that category. This is particularly useful for the Applications, Documents, Messages, Music Creation, Podcasts, Trash, and TV categories.
+
+The category named System Data (or Other) is a general category that measures the storage space used by all Apple and third-party files that don’t belong to any more specific category.
+
+# Optimize storage space
+
+Your Mac can optimize storage by using iCloud to automatically make more storage space available when needed.* It includes built-in utilities to help you quickly find files that are taking up space, and delete any that you longer need.
+
+macOS Ventura 13 or later: How to optimize storage space .
+
+Earlier versions of macOS: How to optimize storage space .
+
+# Move or delete files to free up storage space
+
+If you have another storage device, such as an external drive connected to your Mac, you can move files to that device. Media files such as photos and videos can use a lot of storage space, so you might want to move your Photos library or move your iMovie library , for example.
+
+Delete music , movies , podcasts , or other media, especially if it's media that you can stream or download again as needed.
+
+Delete files in your Downloads folder. Your can open the Downloads folder from the Dock, by clicking Downloads in the sidebar of a window in the Finder, or by choosing Go > Downloads from the menu bar in the Finder.
+
+If you use the Mail app for email, choose Mailbox > Erase Junk Mail from the menu bar in Mail. Also choose Mailbox > Erase Deleted Items.
+
+If you use your Mac to back up your iPhone or iPad, you can delete old backups .
+
+Delete or uninstall apps that you no longer use.
+
+If your Mac is set up for multiple users, delete users that no longer need access to your Mac. Or ask them to follow the steps in this article after logging in to their user account.
+
+Check the Users folder on Macintosh HD for any undeleted data belonging to deleted users, as well as any shared files that you no longer need to share.
+
+If you don't want to delete certain files, you might be able to save space by compressing them . Then expand them when you need to use them again.
+
+Empty your Trash. When you move a file to the Trash, its storage space doesn't become available until you empty the Trash .
+
+# Temporarily free up more storage space
+
+To temporarily make more storage space available, it might help to start up your Mac in safe mode . Your Mac then clears certain system caches, which are automatically created again as needed. This might provide enough storage space to complete a task that needs more space only while the task is underway, such as when installing a macOS update. To leave safe mode, restart your Mac normally.
+
+* Storing files in iCloud uses storage space in your iCloud storage plan. If you reach your iCloud storage limit, you can buy more iCloud storage directly from your Apple device or make more iCloud storage available . iCloud storage starts at 50GB for $0.99 (USD) a month. Learn more about prices in your region .

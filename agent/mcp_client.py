@@ -15,6 +15,9 @@ import asyncio
 import json
 import os
 import sys
+import anyio
+import httpx
+from mcp.shared import exceptions as mcp_exceptions
 from contextlib import AsyncExitStack
 from pathlib import Path
 
@@ -39,6 +42,27 @@ def _attr(obj, *names):
         if hasattr(obj, name):
             return getattr(obj, name)
     raise AttributeError(f"{type(obj).__name__!r} has none of {names!r}")
+
+
+class MCPToolError(ValueError):
+    """Sanitized recoverable MCP transport/protocol failure."""
+
+
+_PROTOCOL_ERROR = getattr(mcp_exceptions, "MCPError", None) or getattr(mcp_exceptions, "McpError")
+_TRANSPORT_ERRORS = (OSError, httpx.HTTPError, anyio.EndOfStream,
+                     anyio.BrokenResourceError, anyio.ClosedResourceError, _PROTOCOL_ERROR)
+
+
+async def call_tool_result(client, name: str, arguments: dict):
+    """Normalize transport failures at the injected MCP boundary, not user content.
+
+    CancelledError is a BaseException and intentionally propagates. Do not leak
+    exception messages, which can contain provider requests or credentials.
+    """
+    try:
+        return await client.call_tool(name, arguments)
+    except _TRANSPORT_ERRORS as exc:
+        raise MCPToolError(f"MCP 도구 통신 실패: {name} ({type(exc).__name__})") from None
 
 
 class MCPClient:

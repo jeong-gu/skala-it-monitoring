@@ -37,6 +37,13 @@ async def proxy_health():
     return JSONResponse(r.json(), status_code=r.status_code)
 
 
+@app.get("/monitoring/scenarios")
+async def proxy_scenarios():
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r=await client.get(f"{BACKEND}/monitoring/scenarios")
+    return JSONResponse(r.json(),status_code=r.status_code)
+
+
 @app.post("/chat")
 async def proxy_chat(req: Request):
     body = await req.body()
@@ -47,12 +54,14 @@ async def proxy_chat(req: Request):
 
 
 @app.get("/chat/stream")
-async def proxy_stream(message: str, thread_id: str = "web-demo"):
+async def proxy_stream(message: str, thread_id: str = "web-demo", scenario_id: str | None = None):
+    params={"message":message,"thread_id":thread_id}
+    if scenario_id is not None:params["scenario_id"]=scenario_id
     async def relay():
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "GET", f"{BACKEND}/chat/stream",
-                params={"message": message, "thread_id": thread_id},
+                params=params,
             ) as upstream:
                 async for chunk in upstream.aiter_bytes():
                     yield chunk

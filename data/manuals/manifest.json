@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "tokenizer": "BAAI/bge-m3",
+  "tokenizer_sha256": "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08",
+  "documents": [
+    {
+      "doc_id": "kernel-memory-control",
+      "os": "linux",
+      "product": "Linux cgroup v2",
+      "version": "source snapshot",
+      "portable": true,
+      "incident_types": [
+        "memory-pressure"
+      ],
+      "url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+      "title": "Linux Kernel — cgroup v2 memory resource control",
+      "definition_terms": [
+        "memory.high"
+      ],
+      "source_url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+      "collected_at": "2026-10-22T00:56:58.762997+00:00",
+      "sha256": "b478c1bae99899df476d6b4989cbb516f7ca93c5f009cdff64b802bbc24f3d4b",
+      "original_path": "data/manuals/originals/kernel-memory-control.html"
+    },
+    {
+      "doc_id": "kernel-cpu-control",
+      "os": "linux",
+      "product": "Linux cgroup v2",
+      "version": "source snapshot",
+      "portable": true,
+      "incident_types": [
+        "cpu-spike"
+      ],
+      "url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+      "title": "Linux Kernel — cgroup v2 cpu resource control",
+      "definition_terms": [
+        "cpu.max",
+        "cpu.idle"
+      ],
+      "source_url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+      "collected_at": "2026-10-22T00:56:58.762997+00:00",
+      "sha256": "b478c1bae99899df476d6b4989cbb516f7ca93c5f009cdff64b802bbc24f3d4b",
+      "original_path": "data/manuals/originals/kernel-cpu-control.html"
+    },
+    {
+      "doc_id": "logrotate",
+      "os": "linux",
+      "product": "logrotate",
+      "version": "source snapshot",
+      "portable": true,
+      "incident_types": [
+        "disk-full"
+      ],
+      "url": "https://raw.githubusercontent.com/logrotate/logrotate/main/logrotate.8.in",
+      "title": "logrotate — System log rotation manual",
+      "format": "roff",
+      "source_url": "https://raw.githubusercontent.com/logrotate/logrotate/main/logrotate.8.in",
+      "collected_at": "2026-10-20T07:24:40.644642+00:00",
+      "sha256": "e481384b3a46dbb09253076616353f50ddf0bc17c2b3e7ad60602969e804ed1d",
+      "original_path": "data/manuals/originals/logrotate.roff"
+    },
+    {
+      "doc_id": "apple-slow",
+      "os": "macos",
+      "product": "macOS",
+      "version": "source snapshot",
+      "portable": true,
+      "incident_types": [
+        "cpu-spike",
+        "memory-pressure",
+        "disk-full"
+      ],
+      "url": "https://support.apple.com/guide/mac-help/if-your-mac-runs-slowly-mchlp1731/mac",
+      "title": "Apple — If your Mac runs slowly",
+      "source_url": "https://support.apple.com/guide/mac-help/if-your-mac-runs-slowly-mchlp1731/mac",
+      "collected_at": "2026-10-20T07:24:42.059243+00:00",
+      "sha256": "a73f6465ac62b4ea168d7d308e0acd2468b04ebd08ddca33dfd2d8940676ed56",
+      "original_path": "data/manuals/originals/apple-slow.html"
+    },
+    {
+      "doc_id": "apple-storage",
+      "os": "macos",
+      "product": "macOS",
+      "version": "source snapshot",
+      "portable": true,
+      "incident_types": [
+        "disk-full"
+      ],
+      "url": "https://support.apple.com/102624",
+      "title": "Apple — Free up storage space on Mac",
+      "source_url": "https://support.apple.com/102624",
+      "collected_at": "2026-10-20T07:24:42.871061+00:00",
+      "sha256": "70ea665e52d6b312bc0affd7699aa0ab403e4f077791622473b7f47ebda2f7ab",
+      "original_path": "data/manuals/originals/apple-storage.html"
+    },
+    {
+      "doc_id": "apple-quit",
+      "os": "macos",
+      "product": "macOS",
+      "version": "source snapshot",
+      "portable": true,
+      "incident_types": [
+        "cpu-spike",
+        "memory-pressure"
+      ],
+      "url": "https://support.apple.com/guide/activity-monitor/quit-a-process-actmntr1002/mac",
+      "title": "Apple — Quit an app or process in Activity Monitor on Mac",
+      "source_url": "https://support.apple.com/guide/activity-monitor/quit-a-process-actmntr1002/mac",
+      "collected_at": "2026-10-20T07:24:44.008116+00:00",
+      "sha256": "25949577dfebabe59904c0a164721096cfa828b5d88955996e89a06c2b6f6caa",
+      "original_path": "data/manuals/originals/apple-quit.html"
+    }
+  ]
+}

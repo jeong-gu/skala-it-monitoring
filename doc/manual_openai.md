@@ -187,3 +187,39 @@ python3 web_demo_server.py
 - 내부적으로 어떤 구성 요소가 맞물려 동작하는지(개발자 관점): [README.md](README.md)
   "아키텍처 구성도" · "주요 유스케이스별 고수준 시퀀스 다이어그램"
 - 과금 없는 로컬 실모델 버전: [manual_ollma.md](manual_ollma.md)
+
+
+## 2026-10-21 현재 프로젝트 설정: OpenAI 메인 LLM + 로컬 임베딩
+
+현재 `.env`는 `LLM_BACKEND=openai`, `SUPERVISOR_VERSION=v2`, 일반 대화용
+`OPENAI_FAST_MODEL=gpt-4o-mini`, 조사·대처·출력·검증용 `OPENAI_QUALITY_MODEL=gpt-4o-mini`로 준비한다.
+`OPENAI_API_KEY=` 오른쪽에 본인 키를 입력한다. 키는 채팅에 붙여 넣지 않는다.
+임베딩은 `MANUAL_EMBED_MODEL=bge-m3`와 기존 Chroma 인덱스를 유지한다. 재색인은 필요 없다.
+`LANGCHAIN_TRACING_V2=false`, `LANGSMITH_TRACING=false`로 원문 추적은 기본 비활성화한다.
+OpenAI 추론에는 요청·필요한 관측·검색 근거가 전송되고 API 사용료가 발생한다.
+
+키를 입력한 뒤 프로젝트 폴더에서 기존 백엔드를 해당 터미널의 Ctrl+C로 종료하고 실행한다.
+대화 DB를 보존하려면 `sh/run_agent_openai.sh`의 초기화 대신 다음 직접 실행을 사용한다.
+
+```bash
+.venv/bin/python server.py
+# 화면 서버가 꺼져 있으면 별도 터미널에서 실행
+.venv/bin/python web_demo_server.py
+```
+
+API 주소는 기존 8100, 화면은 8600이다. 별도 Ollama 비교 평가의 스냅샷·모델·실험 결과에는
+이 설정을 적용하지 않으며, OpenAI 결과와 섞어 성능 향상이라고 주장하지 않는다.
+서버가 이미 실행 중이면 `.env` 저장만으로 모델은 바뀌지 않는다.
+
+OpenAI 일반 JSON 모드에는 각 요청의 출력 스키마를 시스템 지침으로 전달한다. 최종 format은
+`strict json_schema`로 출처 ID의 개수·허용 값을 강제한다. 형식 강제가 내용의 정확성을
+보장하지 않으므로 기존 형식·근거·요구사항 검증과 재시도 한도를 유지한다.
+참고: https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=chat
+
+사용자가 키를 입력한 후 fast·quality를 모두 `gpt-4o-mini`로 기동했다. 실제 API 연결,
+서버 B 기본 상태 조회(top·df), macOS 메모리 매뉴얼 RAG 및 기존 8600 화면에서 검증했다.
+최종 형식 정리는 각 1회였고 두 API 사례의 최종 요구 검증은 보완 없이 passed였다.
+단일 상태 조회 4.342초, 일반 매뉴얼 안내 6.491초는 smoke 관측값이며 성능 개선율이 아니다.
+전체 회귀 189개와 `git diff --check`가 통과했다. Qwen 모델은 해제했고 BGE용 Ollama만 유지한다.
+기존 Ollama 비교 평가는 사용자 요청으로 Before 126·After 5건에서 중단하고 원본을 보존했다.
+After 전체 126건이 없으므로 완성된 Before/After 비교로 보고하지 않는다.

@@ -1,0 +1,121 @@
+# DESCRIPTION
+
+logrotate is designed to ease administration of systems that generate
+large numbers of log files.  It allows automatic rotation, compression,
+removal, and mailing of log files.  Each log file may be handled daily,
+weekly, monthly, or when it grows too large.
+
+Normally, logrotate is run as a daily cron job (or by
+logrotate.timer when using systemd(1)).  It will not modify
+a log more than once in one day unless the criterion for that log is
+based on the log's size and logrotate is being run more than once
+each day, or unless the -f or --force option is used.
+
+When a log file is encountered for the first time (that is, when it has
+no entry in the state file), logrotate records the current time as
+the last rotation time.  As a result, time-based rotation criteria (such
+as daily, weekly, or monthly) may not be satisfied on
+that first run.
+
+Any number of config files may be given on the command line.  Later config
+files may override the options given in earlier files, so the order
+in which the logrotate config files are listed is important.
+Normally, a single config file which includes any other config files
+which are needed should be used.  See below for more information on how
+to use the include directive to accomplish this.  If a directory
+is given on the command line, every file in that directory is used as
+a config file.
+
+If no command line arguments are given, logrotate will print
+version and copyright information, along with a short usage summary.  If
+any errors occur while rotating logs, logrotate will exit with
+non-zero status, although the state file will be updated.
+
+# CONFIGURATION FILE
+
+logrotate reads everything about the log files it should be handling
+from the series of configuration files specified on the command line.  Each
+configuration file can set global options (local definitions override
+global ones, and later definitions override earlier ones) and specify
+logfiles to rotate.  Global options do not affect preceding include
+directives.  A simple configuration file looks like this:
+
+# sample logrotate configuration file
+compress
+
+/var/log/messages {
+    rotate 5
+    weekly
+    postrotate
+        /usr/bin/killall -HUP syslogd
+    endscript
+}
+
+"/var/log/httpd/access.log" /var/log/httpd/error.log {
+    rotate 5
+    mail recipient@example.org
+    size 100k
+    sharedscripts
+    postrotate
+        /usr/bin/killall -HUP httpd
+    endscript
+}
+
+/var/log/news/* {
+    monthly
+    rotate 2
+    olddir /var/log/news/old
+    missingok
+    sharedscripts
+    postrotate
+        kill -HUP $(cat /var/run/inn.pid)
+    endscript
+    nocompress
+}
+
+~/log/*.log {}
+
+The first few lines set global options; in the example, logs are
+compressed after they are rotated.  Note that comments may appear
+anywhere in the config file as long as the first non-whitespace
+character on the line is a #.
+
+Values are separated from directives by whitespace and/or an optional =.
+Numbers must be specified in a format understood by strtoul(3).
+
+The next section of the config file defines how to handle the log file
+/var/log/messages.  The log will go through five weekly rotations before
+being removed.  After the log file has been rotated (but before the old
+version of the log has been compressed), the command
+/usr/bin/killall -HUP syslogd will be executed.
+
+The next section defines the parameters for both
+/var/log/httpd/access.log and /var/log/httpd/error.log.
+Each is rotated whenever it grows over 100\ kilobytes in size, and the old logs
+files are mailed (uncompressed) to recipient@\:example.org after going through 5
+rotations, rather than being removed.  The sharedscripts means that
+the postrotate script will only be run once for this section, not once
+for each log which is rotated.
+Note that log file names may be enclosed in
+quotes (and that quotes are required if the name contains spaces).
+Normal shell quoting rules apply, with ', ", and \e
+characters supported.
+
+The next section defines the parameters for all of the files in
+/var/log/news. Each file is rotated on a monthly basis.
+
+The last section uses tilde expansion to rotate log files in the home
+directory of the current user.  This is only available, if your glob
+library supports tilde expansion.  GNU glob does support this.
+
+Please use wildcards with caution.  If you specify *, logrotate will
+rotate all files, including previously rotated ones.  A way around this
+is to use the olddir directive or a more exact wildcard (such as *.log).
+
+Please note, by default when using systemd(1), the option
+ProtectSystem=full is set in the logrotate.service file.
+This prevents logrotate from modifying logs in /etc
+and /usr.
+
+Here is more information on the directives which may be included in
+a logrotate configuration file:

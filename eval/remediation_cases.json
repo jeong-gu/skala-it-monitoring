@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "description": "공식 매뉴얼 RAG 평가. 개발 18개, 최종 평가 6개. 원문 사실은 검색 결과에서 검증한다.",
+  "cases": [
+    {
+      "id": "cpu-linux-dev",
+      "split": "development",
+      "kind": "positive",
+      "os": "linux",
+      "query": "Linux 서버 CPU가 너무 높아. 어떻게 대응해야 해?",
+      "expected_docs": [
+        "kernel-cpu-control"
+      ],
+      "expected_incident": "cpu-spike"
+    },
+    {
+      "id": "cpu-linux-final",
+      "split": "holdout",
+      "kind": "positive",
+      "os": "linux",
+      "query": "리눅스에서 프로세서가 바쁜 상황을 진단하고 대처하는 절차를 알려줘.",
+      "expected_docs": [
+        "kernel-cpu-control"
+      ],
+      "expected_incident": "cpu-spike"
+    },
+    {
+      "id": "memory-linux-dev",
+      "split": "development",
+      "kind": "positive",
+      "os": "linux",
+      "query": "Linux 메모리 부족 문제에 어떻게 대처해야 해?",
+      "expected_docs": [
+        "kernel-memory-control"
+      ],
+      "expected_incident": "memory-pressure"
+    },
+    {
+      "id": "memory-linux-final",
+      "split": "holdout",
+      "kind": "positive",
+      "os": "linux",
+      "query": "리눅스 앱의 RAM 점유 때문에 버벅여. 메모리를 진단할 대응 방법을 알려줘.",
+      "expected_docs": [
+        "kernel-memory-control"
+      ],
+      "expected_incident": "memory-pressure"
+    },
+    {
+      "id": "disk-linux-dev",
+      "split": "development",
+      "kind": "positive",
+      "os": "linux",
+      "query": "Linux 디스크가 거의 꽉 찼고 로그가 커. 대응 방법을 알려줘.",
+      "expected_docs": [
+        "logrotate"
+      ],
+      "expected_incident": "disk-full"
+    },
+    {
+      "id": "disk-linux-final",
+      "split": "holdout",
+      "kind": "positive",
+      "os": "linux",
+      "query": "리눅스에서 No space left on device 오류가 나. 저장 공간 문제를 어떻게 조치하지?",
+      "expected_docs": [
+        "logrotate"
+      ],
+      "expected_incident": "disk-full"
+    },
+    {
+      "id": "cpu-mac-dev",
+      "split": "development",
+      "kind": "positive",
+      "os": "macos",
+      "query": "macOS CPU 사용량이 높아. 대응 절차를 알려줘.",
+      "expected_docs": [
+        "apple-quit",
+        "apple-slow"
+      ],
+      "expected_incident": "cpu-spike"
+    },
+    {
+      "id": "cpu-mac-final",
+      "split": "holdout",
+      "kind": "positive",
+      "os": "macos",
+      "query": "맥에서 연산 부하가 심하고 앱이 멈췄어. 어떻게 대처해야 할까?",
+      "expected_docs": [
+        "apple-quit",
+        "apple-slow"
+      ],
+      "expected_incident": "cpu-spike"
+    },
+    {
+      "id": "memory-mac-dev",
+      "split": "development",
+      "kind": "positive",
+      "os": "macos",
+      "query": "macOS 메모리가 부족할 때 대응 방법을 알려줘.",
+      "expected_docs": [
+        "apple-slow",
+        "apple-quit"
+      ],
+      "expected_incident": "memory-pressure"
+    },
+    {
+      "id": "memory-mac-final",
+      "split": "holdout",
+      "kind": "positive",
+      "os": "macos",
+      "query": "맥에서 RAM이 모자라고 앱 메모리 압박이 있어. 어떻게 해결하면 돼?",
+      "expected_docs": [
+        "apple-slow",
+        "apple-quit"
+      ],
+      "expected_incident": "memory-pressure"
+    },
+    {
+      "id": "disk-mac-dev",
+      "split": "development",
+      "kind": "positive",
+      "os": "macos",
+      "query": "macOS 저장 공간이 부족해. 대처방안을 알려줘.",
+      "expected_docs": [
+        "apple-storage"
+      ],
+      "expected_incident": "disk-full"
+    },
+    {
+      "id": "disk-mac-final",
+      "split": "holdout",
+      "kind": "positive",
+      "os": "macos",
+      "query": "맥 시동 디스크에 여유 공간이 없어 파일을 복사할 수 없어. 어떻게 조치할까?",
+      "expected_docs": [
+        "apple-storage"
+      ],
+      "expected_incident": "disk-full"
+    },
+    {
+      "id": "unsupported-linux-cert",
+      "split": "development",
+      "kind": "negative",
+      "os": "linux",
+      "query": "Linux SSL 인증서가 만료됐어. 갱신 대처방안을 알려줘.",
+      "expected_status": "not_found"
+    },
+    {
+      "id": "unsupported-mac-db",
+      "split": "development",
+      "kind": "negative",
+      "os": "macos",
+      "query": "macOS PostgreSQL 데이터베이스의 트랜잭션 교착 상태를 해결하는 방법은?",
+      "expected_status": "not_found"
+    },
+    {
+      "id": "unsupported-windows",
+      "split": "development",
+      "kind": "negative",
+      "os": null,
+      "query": "Windows 프린터 드라이버 오류 해결 방법을 알려줘.",
+      "expected_status": "needs_clarification"
+    },
+    {
+      "id": "os-mismatch",
+      "split": "development",
+      "kind": "negative",
+      "os": null,
+      "query": "서버 G의 Linux CPU 문제 대처방안을 알려줘.",
+      "history": [],
+      "expected_status": "needs_clarification",
+      "forbid_manual_search": true
+    },
+    {
+      "id": "ambiguous-environment",
+      "split": "development",
+      "kind": "negative",
+      "os": null,
+      "query": "어떻게 조치하면 돼?",
+      "expected_status": "needs_clarification",
+      "forbid_manual_search": true
+    },
+    {
+      "id": "unsupported-network",
+      "split": "development",
+      "kind": "negative",
+      "os": "linux",
+      "query": "Linux 네트워크 라우터의 BGP 경로 장애를 해결하는 방법을 알려줘.",
+      "expected_status": "not_found"
+    },
+    {
+      "id": "status-cpu",
+      "split": "development",
+      "kind": "no_trigger",
+      "query": "서버 B CPU 사용률 알려줘",
+      "forbid_manual_search": true
+    },
+    {
+      "id": "status-memory",
+      "split": "development",
+      "kind": "no_trigger",
+      "query": "서버 G 메모리 상태 확인해줘",
+      "forbid_manual_search": true
+    },
+    {
+      "id": "raw-json",
+      "split": "development",
+      "kind": "no_trigger",
+      "query": "서버 D df JSON만",
+      "forbid_manual_search": true
+    },
+    {
+      "id": "raw-with-action",
+      "split": "development",
+      "kind": "no_trigger",
+      "query": "서버 B CPU 대처방안 말고 top 원문만",
+      "forbid_manual_search": true
+    },
+    {
+      "id": "no-remediation",
+      "split": "development",
+      "kind": "no_trigger",
+      "query": "서버 C 메모리 지표만 보고 대처방안은 알려주지 마",
+      "forbid_manual_search": true
+    },
+    {
+      "id": "greeting",
+      "split": "development",
+      "kind": "no_trigger",
+      "query": "안녕. 오늘도 잘 부탁해",
+      "forbid_manual_search": true
+    }
+  ],
+  "global_assertions": [
+    "다른 OS의 매뉴얼을 제시하지 않는다",
+    "모든 대응 단계는 검색된 청크의 실제 원문 인용을 가진다",
+    "단계의 수치·명령은 모델이 자유 생성하지 않는다",
+    "조치를 실행하거나 복구 완료를 확인했다고 주장하지 않는다",
+    "일반 매뉴얼 질문은 서버 명령 결과를 조회하지 않는다",
+    "검색 1회, 요약 모델 최대 2회(수정 1회 포함)를 지킨다",
+    "조회 방법이 아닌 실제 완화·해결 조치만 제시하며 적용 조건과 부작용을 함께 제공한다"
+  ]
+}

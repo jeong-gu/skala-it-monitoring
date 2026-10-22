@@ -47,6 +47,12 @@ class ServerInfo(BaseModel):
     os: Literal["linux", "macos"]
 
 
+class ScenarioInfo(BaseModel):
+    scenario_id: str
+    display_name: str
+    os: Literal["linux", "macos"]
+
+
 class CommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     server_id: str = Field(min_length=1, max_length=64)
@@ -115,6 +121,12 @@ class ScenarioStore:
     def server_list(self) -> list[ServerInfo]:
         return [ServerInfo.model_validate(s.model_dump()) for s in self.servers.values()]
 
+    def scenario_list(self) -> list[ScenarioInfo]:
+        labels={"normal":"정상", "cpu_pressure":"CPU 부하", "memory_pressure":"메모리 부족", "disk_pressure":"디스크 부족"}
+        return [ScenarioInfo(scenario_id=s.server_id,
+                            display_name=f"상태 {s.server_id.removeprefix('server-').upper()} · {labels.get(s.scenario,s.scenario)}",os=s.os)
+                for s in self.servers.values()]
+
     def commands(self, server_id: str) -> list[CommandDefinition]:
         return self.catalog[self.server(server_id).os]
 
@@ -141,6 +153,10 @@ class ScenarioStore:
 def create_router(store: ScenarioStore | None = None) -> APIRouter:
     store = store if store is not None else ScenarioStore()
     router = APIRouter(prefix="/monitoring", tags=["Local command scenarios"])
+
+    @router.get("/scenarios", response_model=list[ScenarioInfo])
+    async def list_scenarios():
+        return store.scenario_list()
 
     @router.get("/information", response_model=list[InformationDefinition])
     async def list_information():

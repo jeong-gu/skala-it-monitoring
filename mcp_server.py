@@ -58,6 +58,17 @@ async def get_command_result(server_id: str, command: str) -> dict:
                                 json={"server_id": server_id, "command": command})
 
 
+@mcp.tool()
+async def search_remediation_manuals(query: str, os: str, evidence_summary: str = "", allow_mixed_topics: bool = False) -> dict:
+    """로컬 공식 매뉴얼을 의미 검색합니다. OS·적용 환경을 제한하며 셸 실행은 하지 않습니다."""
+    import asyncio
+    from remediation.index import ManualIndex
+    try:
+        return await asyncio.to_thread(ManualIndex().search, query, os, evidence_summary, allow_mixed_topics=allow_mixed_topics)
+    except (ValueError, OSError) as exc:
+        raise ToolError(str(exc)) from exc
+
+
 class SystemStatus(BaseModel):
     system_name: str = Field(description="시스템 이름")
     status: str = Field(description="상태: healthy / degraded / down")

@@ -143,3 +143,123 @@ def extract_facts(result: dict) -> list[dict]:
         if len(lines) <= 100 and all(re.match(r"^\d{4}-\d{2}-\d{2}T\S+\s+(INFO|WARN|ERROR|DEBUG)\b", line) for line in lines):
             add("log.content", {"lines": lines}, "최근 애플리케이션 로그 발췌:\n" + "\n".join(lines), text.strip())
     return facts
+
+
+def causal_factors(evidence):
+    """Observed contributors only; abnormality and applicability are separate.
+
+    Reparse raw output so a stale/mutated facts dictionary cannot create factors.
+    A log symptom without an explicit recorded reason is not a causal factor.
+    """
+    factors = []
+    for e in evidence:
+        if e.get("error") or e.get("exit_code") != 0:continue
+        facts = extract_facts(e)
+        eid = e["evidence_id"]
+        def add(suffix, kind, text, quotes, **fields):
+            factors.append(dict(factor_id=f"{eid}:{suffix}",kind=kind,text=text,
+                server_id=e["server_id"],evidence_ids=[eid],quotes=quotes,**fields))
+        for fact in facts:
+            fields = fact["fields"]
+            if fact["information_id"] == "process":
+                rows = fact["quote"].splitlines()
+                for i,entry in enumerate(fields["entries"]):
+                    quote = rows[i]
+                    if entry["cpu_percent"] > 0:
+                        add(f"process:{i}:cpu", "process_cpu",
+                            f"PID {entry['pid']} {entry['name']}의 CPU 사용률 {entry['cpu_percent']:g}%는 프로세스 코어 합산 값으로 시스템 전체 사용률과 기준이 다릅니다. 이 프로세스의 연산 작업은 관측된 CPU 사용에 기여할 수 있는 후보입니다.", [quote])
+                    if entry["rss_kib"] > 0:
+                        add(f"process:{i}:memory", "process_memory",
+                            f"PID {entry['pid']} {entry['name']}의 메모리 점유율 {entry['memory_percent']:g}%, RSS {entry['rss_kib']} KiB가 관측됐습니다. 이 프로세스의 메모리 점유는 관측된 물리 메모리 사용에 기여할 수 있는 후보입니다.", [quote])
+            elif fact["information_id"] == "log.usage" and fields["size_kib"] > 0:
+                add("storage", "log_storage",
+                    f"등록된 로그 디렉터리 {fields['path']}의 사용량 {fields['size_kib']} KiB가 관측됐습니다.",
+                    [fact["quote"]], path=fields["path"])
+            elif fact["information_id"] == "log.content":
+                for i,line in enumerate(fields["lines"]):
+                    # Explicit machine-written reason fields, not inferred keywords
+                    # such as 'memory pressure' or 'timeout' standing alone.
+                    if re.search(r"\b(?:WARN|ERROR)\b",line) and re.search(r"\breason=\S",line) and len(line) <= 220:
+                        add(f"log:{i}:reason", "log_reason",
+                            f"로그에 기록된 실패 이유는 ‘{line}’입니다. 이 기록은 관련 실패의 원인 조사 단서이며 독립적으로 확인한 근본 원인은 아닙니다.", [line])
+    return factors
+
+
+def verify_metric_values(text, evidence):
+    """Check explicit metric/value phrases against reparsed native fields.
+
+    This is a deterministic numeric-claim check, not a language intent router.
+    Unlabelled qualitative prose still needs the final semantic validator.
+    Calculated values are rendered separately from their checked operands and
+    cannot authorize a different native CPU/memory/process metric here.
+    """
+    from decimal import Decimal
+    sources=[]
+    for source in evidence:
+        if source.get('error') or source.get('exit_code') != 0:continue
+        for fact in extract_facts(source):sources.append((source,fact))
+    if not sources:return
+    process_rows=[(s,row) for s,f in sources if f['information_id']=='process' for row in f['fields']['entries']]
+    metric_names=re.compile(r'CPU|메모리|memory|RAM|RSS|디스크|disk|Swap',re.I)
+    value_pattern=re.compile(r'(?<![\w.])(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>%|MiB|KiB|GiB)(?![A-Za-z])|(?<![\w.])(?P<percent>\d+(?:\.\d+)?)\s*%')
+    descriptor=re.compile(r'(available|unused|free|total|used|idle|user|system|sys|전체|총|미사용|가용|여유|사용|유휴|사용자|커널|시스템)(?:\s*(?:용량|메모리|비율|사용률|점유율|수치|값|률|율|량))?\s*(?:은|는|이|가|:|=)?\s*$',re.I)
+    scales={'MiB':Decimal(1),'KiB':Decimal(1)/1024,'GiB':Decimal(1024)}
+    for match in value_pattern.finditer(text):
+        prefix=text[:match.start()]
+        # A new sentence has no implicit metric from an earlier sentence.
+        prefix=re.split(r'(?<=[가-힣A-Za-z%])\.\s+|[\n;]',prefix)[-1]
+        names=list(metric_names.finditer(prefix))
+        if not names:continue
+        label=names[-1];kind=label.group().lower();tail=prefix[label.end():]
+        if len(tail)>100:continue
+        value=Decimal(match['value'] or match['percent']);unit=match['unit'] or '%'
+        desc=descriptor.search(prefix)
+        desc=desc[1].lower() if desc else ''
+        named=[]
+        for source,row in process_rows:
+            positions=[m.start() for m in re.finditer(r'(?<![A-Za-z0-9_.-])'+re.escape(row['name'])+r'(?![A-Za-z0-9_.-])',prefix)]
+            positions += [m.start() for m in re.finditer(r'\bPID\s*'+str(row['pid'])+r'(?!\d)',prefix,re.I)]
+            if positions:named.append((max(positions),source,row))
+        rows=[(s,r) for pos,s,r in named if pos==max((v[0] for v in named),default=-1)]
+        # Explicit system CPU always means the host, even when a process was
+        # mentioned elsewhere in the sentence.
+        if kind=='cpu' and (re.search(r'(?:시스템|전체)\s*$',prefix[:label.start()]) or re.match(r'\s*(?:전체|시스템)\s*사용률',tail)):rows=[]
+        iid=None;field=None;expected=[]
+        if kind=='cpu' and unit=='%':
+            if rows:
+                iid='process';field='cpu_percent'
+            else:
+                iid='cpu';field={'유휴':'idle_percent','idle':'idle_percent','사용자':'user_percent','user':'user_percent','커널':'system_percent','시스템':'system_percent','system':'system_percent','sys':'system_percent'}.get(desc,'usage_percent')
+        elif kind=='rss' and unit in scales:
+            iid='process';field='rss_kib'
+        elif kind in {'메모리','memory','ram'}:
+            if unit=='%':
+                iid='process';field='memory_percent'
+                if not rows:
+                    raise ValueError('시스템 메모리 비율은 원본 용량의 검증된 계산 결과로만 제공하세요. 프로세스 비율과 바꾸지 마세요.')
+            elif unit in scales:
+                iid='memory.summary';field={'전체':'total_mib','총':'total_mib','total':'total_mib','사용':'used_mib','used':'used_mib','free':'free_mib','available':'available_mib','가용':'available_mib','unused':'unused_mib','미사용':'unused_mib'}.get(desc)
+                if field is None and re.search(r'사용\s*메모리',prefix,re.I):field='used_mib'
+                if field is None:continue  # e.g. an unlabelled operand in a checked equation
+        elif kind in {'디스크','disk'} and unit=='%':
+            iid='disk';field='usage_percent'
+        elif kind=='swap' and unit in scales:
+            iid='memory.detail';field={'전체':'swap_total_mib','총':'swap_total_mib','total':'swap_total_mib','사용':'swap_used_mib','used':'swap_used_mib','여유':'swap_free_mib','free':'swap_free_mib'}.get(desc)
+            if field is None:continue
+        else:continue
+        if iid=='process':
+            if not rows:continue  # Process identity is required by the existing source/quote checker.
+            expected=[Decimal(str(row[field])) for _,row in rows]
+            if field=='rss_kib':expected=[v/1024/scales[unit] for v in expected]
+        else:
+            for source,fact in sources:
+                if fact['information_id']!=iid:continue
+                if iid=='disk':
+                    entries=fact['fields']['entries']
+                    mounts=[r for r in entries if re.search(r'(?<!\S)'+re.escape(r['mount'])+r'(?=\s|:|$)',prefix)]
+                    expected += [Decimal(str(r[field])) for r in mounts or entries]
+                elif field in fact['fields']:
+                    v=Decimal(str(fact['fields'][field]))
+                    expected.append(v/scales[unit] if unit in scales else v)
+        if not expected or value not in expected:
+            raise ValueError(f'지표와 수치가 일치하지 않습니다: {iid}.{field}={value} {unit}. 원문 값: '+', '.join(map(str,expected))+'. 해당 필드의 값만 인용하세요.')

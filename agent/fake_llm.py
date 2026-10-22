@@ -5,11 +5,34 @@
 길이 기반 토큰 추정치로 비용을 계산해 상태에 누적한다 (Wave 10a의 모델 분리 근거).
 """
 import re
+import json
 
 from langsmith import traceable
 
 
 class FakeLLM:
+    def response_json(self, purpose: str, payload: dict, schema: dict):
+        from .response_policy import fake_response
+        answer = json.dumps(fake_response(purpose, payload), ensure_ascii=False)
+        return answer, self._usage(str(payload), answer)
+
+    def remediation_json(self, payload: dict, schema: dict):
+        # Offline test adapter only. Actual backends use their real model.
+        from .remediation import requirement_types
+        requirements=payload.get("requirements",[])
+        types=sorted(set().union(*(requirement_types(r) for r in requirements))) if requirements else []
+        if not types:types=payload["actions"][0]["incident_types"][:1] if payload["actions"] else []
+        choices=[a for a in payload["actions"] if a["risk"]!="process_stop" and set(a["incident_types"])&set(types)]
+        selected=[]
+        for r in requirements:
+            for a in choices:
+                if (not requirement_types(r) or requirement_types(r)&set(a["incident_types"])) and a not in selected:
+                    selected.append(a);break
+        selected=(selected+[a for a in choices if a not in selected])[:5]
+        ids=[a["action_id"] for a in selected]
+        assignments=[{"action_id":a["action_id"],"requirement_ids":[r["requirement_id"] for r in requirements if not requirement_types(r) or requirement_types(r)&set(a["incident_types"])]} for a in selected] if requirements else []
+        return json.dumps({"applicable":bool(ids),"incident_types":types,"action_ids":ids,"assignments":assignments}),{"usd":0}
+
     def monitoring_json(self, purpose: str, payload: dict, schema: dict):
         import json
         from .investigation_models import fake_decision

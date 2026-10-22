@@ -50,6 +50,25 @@ def _extract_system_name(query: str) -> str:
 
 
 class AgentState(TypedDict, total=False):
+    scenario_id: str | None
+    scenario_os: str | None
+    single_server_mode: bool
+    request_subject: str
+    reference_target: str | None
+    workflow_manual: bool
+    workflow_budget: dict
+    workflow_timings_ms: dict
+    manual_state: dict
+    _presentation_done: bool
+    response_style: str
+    request_decision: dict
+    raw_output: bool
+    direct_response_override: str
+    answer_blocks: list[dict]
+    requirement_coverage: dict
+    presentation: dict
+    remediation: dict | None
+    investigation_context: dict | None
     query: str
     thread_id: str
     history: list[dict]
@@ -87,15 +106,8 @@ def _cost(state: AgentState, usage: dict) -> float:
 @traceable(name="route_node")
 async def route_node(state: AgentState, deps: SupervisorDeps) -> dict:
     """Wave 5 — 모든 쿼리가 무거운 파이프라인을 탈 필요는 없다."""
-    is_legacy = any(s in state["query"] for s in KNOWN_SYSTEMS)
-    if monitoring_request(state["query"]) and (not is_legacy or mentioned_servers(state["query"])):
-        return {"route": "commands", "needs_analysis": False,
-                "events": state.get("events", []) + [{"type": "RouteDecided", "route": "commands"}]}
-    result, usage = deps.fast_llm.route(state["query"])
-    event = {"type": "RouteDecided", "route": result["route"]}
-    return {"route": result["route"], "needs_analysis": result["needs_analysis"],
-            "cost_usd": _cost(state, usage),
-            "events": state.get("events", []) + [event]}
+    from .response_policy import request_route
+    return await request_route(state, deps, KNOWN_SYSTEMS)
 
 
 @traceable(name="chat_answer_node")
@@ -105,13 +117,9 @@ async def chat_answer_node(state: AgentState, deps: SupervisorDeps) -> dict:
     토큰 단위 스트리밍 — get_stream_writer()는 /chat/stream처럼 custom 모드로 소비될
     때만 실제로 전송되고, /chat(ainvoke)처럼 스트리밍하지 않는 호출에서는 자동으로
     no-op이 된다."""
-    writer = get_stream_writer()
-    reply, usage = await deps.fast_llm.chat(
-        state["query"], state.get("history", []),
-        on_token=lambda piece: writer({"type": "AnswerToken", "delta": piece}))
-    return {"final": reply, "last_prompt": usage.get("prompt"),
-            "cost_usd": _cost(state, usage),
-            "events": state["events"] + [{"type": "Finalize", "pipeline": "chat-direct"}]}
+    # The last presentation node generates the direct answer in one model call.
+    # No MCP calls or unvalidated draft tokens are emitted on this path.
+    return {"final":"", "events":state.get("events",[])}
 
 
 @traceable(name="plan_node")
@@ -280,7 +288,7 @@ async def write_node(state: AgentState, deps: SupervisorDeps) -> dict:
         state["query"], state.get("collected", []),
         attempt, state.get("validation_feedback"),
         on_token=lambda piece: writer(
-            {"type": "AnswerToken", "attempt": attempt, "delta": piece}))
+            {"type": "DraftToken", "attempt": attempt, "delta": piece}))
     return {"draft": draft, "last_prompt": usage.get("prompt"),
             "cost_usd": _cost(state, usage),
             "events": state["events"] + [{"type": "DraftWritten", "attempt": attempt,
@@ -311,7 +319,9 @@ async def finalize_node(state: AgentState, deps: SupervisorDeps) -> dict:
 
 
 def _after_route(state: AgentState) -> str:
-    if state["route"] == "commands":
+    if state["route"] == "remediation":
+        return "remediation"
+    if state["route"] in {"commands","investigate_remediate"}:
         return "command_query"
     return "chat_answer" if state["route"] == "chat" else "plan"
 
@@ -326,9 +336,12 @@ def _after_validate(state: AgentState) -> str:
 
 
 def build_graph(deps: SupervisorDeps):
+    from .remediation import remediation_workflow
+    from .response_policy import present_response
     g = StateGraph(AgentState)
     node = lambda fn: partial(fn, deps=deps)   # Wave 13 — 명시적 의존성 주입
     g.add_node("route", node(route_node))
+    g.add_node("remediation", node(remediation_workflow))
     g.add_node("chat_answer", node(chat_answer_node))
     g.add_node("command_query", node(command_query_node))
     g.add_node("plan", node(plan_node))
@@ -339,12 +352,14 @@ def build_graph(deps: SupervisorDeps):
     g.add_node("write", node(write_node))
     g.add_node("validate", node(validate_node))
     g.add_node("finalize", node(finalize_node))
+    g.add_node("present_response", node(present_response))
 
     g.set_entry_point("route")
     g.add_conditional_edges("route", _after_route,
-                            {"chat_answer": "chat_answer", "plan": "plan", "command_query": "command_query"})
-    g.add_edge("chat_answer", END)
-    g.add_edge("command_query", END)
+                            {"chat_answer": "chat_answer", "plan": "plan", "command_query": "command_query", "remediation":"remediation"})
+    g.add_edge("remediation", "present_response")
+    g.add_edge("chat_answer", "present_response")
+    g.add_edge("command_query", "present_response")
     g.add_edge("plan", "gate")
     g.add_edge("gate", "research")
     g.add_edge("research", "replan_check")
@@ -354,5 +369,83 @@ def build_graph(deps: SupervisorDeps):
     g.add_edge("write", "validate")
     g.add_conditional_edges("validate", _after_validate,
                             {"finalize": "finalize", "write": "write"})
-    g.add_edge("finalize", END)
+    g.add_edge("finalize", "present_response")
+    g.add_edge("present_response", END)
     return g.compile()
+
+
+class DiagnosticAgentState(TypedDict, total=False):
+    assignment: list[dict]
+    evidence: list[dict]
+    diagnoses: list[dict]
+    tasks: list[dict]
+    rounds: int
+    status: str
+
+
+def diagnostic_scope(role, assignment):
+    scopes = {
+        "metrics": {"system", "cpu", "process", "memory.summary", "memory.detail", "disk", "network"},
+        "logs": {"log.files", "log.usage", "log.content"},
+    }
+    if role not in scopes:raise ValueError("Unknown diagnostic role")
+    context = {"disk"} if role == "logs" and any("disk" in r.get("supporting_for", []) for r in assignment) else set()
+    return scopes[role], context
+
+
+def diagnostic_observations(role, assignment, evidence):
+    """Read-only cross-role context never expands the role's tool permissions."""
+    from copy import deepcopy
+    allowed, context = diagnostic_scope(role, assignment)
+    targets = {s for r in assignment for s in r["server_ids"]}
+    support_targets = {s for r in assignment for s in r.get("supporting_server_ids", [])}
+    result = []
+    for source in evidence:
+        if source["server_id"] not in targets:continue
+        visible = allowed | (context if source["server_id"] in support_targets else set())
+        facts = [f for f in source.get("facts", []) if f["information_id"] in visible]
+        if facts:result.append({**deepcopy(source), "facts":deepcopy(facts)})
+    return result
+
+
+def build_diagnostic_agent(role, decide, observe, emit):
+    """Role-local decision/observation loop; supervisor grants scoped tool access."""
+    from copy import deepcopy
+    from .investigation_models import DiagnosticDecision
+    # Validate the role at construction even before an assignment is available.
+    allowed, _ = diagnostic_scope(role, [])
+
+    async def assess(local):
+        targets = {s for r in local["assignment"] for s in r["server_ids"]}
+        evidence = diagnostic_observations(role, local["assignment"], local["evidence"])
+        decision = await decide(role, deepcopy(local["assignment"]), evidence, sorted(allowed))
+        decision = DiagnosticDecision.model_validate(decision)
+        for task in decision.tasks:
+            if task.server_id not in targets or not set(task.information_ids) <= allowed:
+                raise ValueError("전문 에이전트의 조회가 배정된 대상·정보 범위를 벗어났습니다.")
+        known = {(e["server_id"], f["information_id"]) for e in evidence for f in e["facts"]}
+        pending = []
+        for task in decision.tasks:
+            ids = [i for i in task.information_ids if (task.server_id, i) not in known]
+            if ids:pending.append({**task.model_dump(), "information_ids": ids})
+        emit("SpecialistAssessed", role=role, observations=len(evidence), additional_tasks=len(pending))
+        return {"diagnoses": [a.model_dump() for a in decision.diagnoses], "tasks": pending,
+                "status": "needs_information" if pending else "assessed"}
+
+    async def collect(local):
+        # The callback owns command deduplication and the request-wide budgets.
+        evidence, progressed = await observe(deepcopy(local["tasks"]))
+        return {"evidence": deepcopy(evidence), "rounds": local.get("rounds", 0)+1,
+                "status": "observed" if progressed else "limited"}
+
+    def after_assessment(local):
+        return "collect" if local["tasks"] and local.get("rounds", 0)<2 else END
+
+    graph = StateGraph(DiagnosticAgentState)
+    graph.add_node("assess", assess)
+    graph.add_node("collect", collect)
+    graph.set_entry_point("assess")
+    graph.add_conditional_edges("assess", after_assessment, {"collect": "collect", END: END})
+    graph.add_conditional_edges("collect", lambda s: "assess" if s["status"]=="observed" else END,
+                                {"assess": "assess", END: END})
+    return graph.compile(name=role+"_diagnostic_agent")

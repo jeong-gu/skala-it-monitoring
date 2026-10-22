@@ -1,0 +1,13 @@
+# Quit an app or process in Activity Monitor on Mac
+
+You can use Activity Monitor to quit a process, even if it’s in a loop or not responding. You can also send a signal to a process to terminate it. If you attempt to quit a process you don’t own, you may be required to authenticate as an administrator .
+
+Open Activity Monitor for me
+
+In the Activity Monitor app on your Mac, under the Process Name list, select the app or process you want to quit. An unresponsive process is marked with (Not Responding) and appears red. Note: The Process Name list is not available in the Cache tab listings.
+
+Click in the upper-left corner of the Activity Monitor window.
+
+Choose one of the following options: Quit: This is the same as choosing File > Quit within an app. The process quits when it’s safe to do so. If quitting the process could cause data loss or interfere with another app, the process doesn’t quit. Force Quit: The process quits immediately. If the process has files open, you may lose data. If the process is used by other apps or processes, those apps or processes could experience problems. To see if a process is used by another process, choose View > All Processes, Hierarchically.
+
+To send a signal to a process, select it in the process list, choose View > Send Signal to Process, choose a signal from the pop-up menu, then click Send.

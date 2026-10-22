@@ -1,0 +1,7 @@
+# cpu.max
+
+A read-write two value file which exists on non-root cgroups. The default is “max 100000”. The maximum bandwidth limit. It’s in the following format: $MAX $PERIOD which indicates that the group may consume up to $MAX in each $PERIOD duration. “max” for $MAX indicates no limit. If only one number is written, $MAX is updated. This file affects only processes under the fair-class scheduler and a BPF scheduler with the cgroup_set_bandwidth callback depending on what the callback actually does.
+
+# cpu.idle
+
+A read-write single value file which exists on non-root cgroups. The default is 0. This is the cgroup analog of the per-task SCHED_IDLE sched policy. Setting this value to a 1 will make the scheduling policy of the cgroup SCHED_IDLE. The threads inside the cgroup will retain their own relative priorities, but the cgroup itself will be treated as very low priority relative to its peers. This file affects only processes under the fair-class scheduler and a BPF scheduler with the cgroup_set_idle callback depending on what the callback actually does.

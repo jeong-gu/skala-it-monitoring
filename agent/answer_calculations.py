@@ -1,5 +1,32 @@
 """No model arithmetic or shell/eval: compute only referenced numeric fields."""
 from decimal import Decimal, InvalidOperation
+import re
+import hashlib
+import json
+
+
+class CalculationRejected(ValueError):
+    def __init__(self, spec, inputs):
+        reason = "CPU 지표의 집계 기준이 다릅니다. 시스템 전체 비율과 프로세스 코어 합산 비율은 직접 계산할 수 없습니다."
+        super().__init__(reason)
+        self.code = "incompatible_cpu_basis"
+        self.requirement_ids = list(spec.requirement_ids)
+        self.operand_refs = inputs
+        self.operation = spec.operation
+        self.fingerprint = hashlib.sha256(json.dumps([spec.operation, inputs],sort_keys=True).encode()).hexdigest()
+        self.repairable = False
+
+    def record(self):
+        return dict(code=self.code, requirement_ids=self.requirement_ids, operand_refs=self.operand_refs,
+                    operation=self.operation, fingerprint=self.fingerprint, repairable=self.repairable, reason=str(self))
+
+
+def _cpu_basis(ref):
+    if ref.information_id == "cpu" and ref.field in {"usage_percent", "user_percent", "system_percent", "idle_percent"}:
+        return "system_cpu"
+    if ref.information_id == "process" and re.fullmatch(r"entries\.\d+\.cpu_percent", ref.field):
+        return "process_core_sum"
+    return None
 
 MEMORY = {"B": Decimal(1), "KiB": Decimal(1024), "MiB": Decimal(1024**2), "GiB": Decimal(1024**3)}
 
@@ -25,7 +52,12 @@ def calculate(spec, evidence, requirement_ids):
         value = fact["fields"]
         try:
             for segment in ref.field.split("."):
-                value = value[int(segment)] if isinstance(value, list) else value[segment]
+                if isinstance(value, list):
+                    if not re.fullmatch(r"\d+", segment):
+                        raise ValueError("목록 필드는 음수가 아닌 숫자 인덱스로 지정해야 합니다.")
+                    value = value[int(segment)]
+                else:
+                    value = value[segment]
         except (KeyError, IndexError, TypeError, ValueError):
             raise ValueError("계산의 원본 필드가 없습니다.") from None
         leaf = ref.field.split(".")[-1]
@@ -35,6 +67,11 @@ def calculate(spec, evidence, requirement_ids):
                       if leaf.endswith(suffix)), "number"))
         inputs.append({**ref.model_dump(), "server_id": source["server_id"],
                        "value": str(_number(value)), "unit": unit})
+    bases = {_cpu_basis(ref) for ref in spec.operands}
+    if bases == {"system_cpu", "process_core_sum"}:
+        raise CalculationRejected(spec, inputs)
+    if any(b is not None for b in bases) and len(bases) > 1:
+        raise ValueError("CPU 지표의 집계 기준이 다릅니다. 시스템 전체 비율과 프로세스 코어 합산 비율 등을 직접 계산할 수 없습니다.")
     vals = [Decimal(i["value"]) for i in inputs]; units = [i["unit"] for i in inputs]
     # Normalize memory operands before operations; do not equate OS-specific meanings.
     if all(u in MEMORY for u in units):

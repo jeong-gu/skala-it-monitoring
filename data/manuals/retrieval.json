@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "minimum_score": 0.522496,
+  "minimum_score_by_os": {
+    "linux": 0.474803,
+    "macos": 0.522496
+  },
+  "status": "calibrated",
+  "require_reviewed_actions": true,
+  "index_fingerprint": "ab23760544eef8d054b2fcf202aa6d7bf44c6478986a888d1bbb9cbafa9011bb",
+  "embedding_model": "bge-m3",
+  "candidate_count": 5,
+  "result_chunk_limit": 2,
+  "development_hits": 6,
+  "development_positive_count": 6,
+  "development_false_acceptances": 0,
+  "calibrated_at": "2026-10-22T01:05:49.102814+00:00"
+}

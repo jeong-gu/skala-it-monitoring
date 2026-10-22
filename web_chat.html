@@ -23,6 +23,8 @@
     font-weight: 600; font-size: 15px;
   }
   header span { color: #8b8bd8; font-weight: 400; font-size: 13px; margin-left: 8px; }
+  .scenario-picker { padding:10px 20px; background:#262638; display:flex; gap:12px; align-items:center; font-size:13px; }
+  select { background:#1e1e2e; color:#e2e2f0; padding:7px 10px; border:1px solid #3a3a52; border-radius:7px; }
   #log {
     flex: 1; min-height: 0;   /* flex 자식 기본 최소높이(콘텐츠 크기)를 풀어줘야
                                  내용이 길어져도 바디가 안 늘어나고 여기서만 스크롤됨 */
@@ -80,6 +82,14 @@
 <body>
 <div id="app">
   <header>운영 인시던트 대응 에이전트 <span>{{ backendLabel }}</span></header>
+  <div class="scenario-picker">
+    <label for="scenario-select">자원 상태 시나리오</label>
+    <select id="scenario-select" v-model="scenarioId" @change="onScenarioChange" :disabled="sending">
+      <option value="" disabled>시나리오를 선택하세요</option>
+      <option v-for="s in scenarios" :key="s.scenario_id" :value="s.scenario_id">{{ s.display_name }} · {{ s.os }}</option>
+    </select>
+    <span>{{ scenarioError || '한 서버의 테스트 상태입니다. 변경하면 이전 관측을 분리합니다.' }}</span>
+  </div>
   <div id="log" ref="logEl">
     <template v-for="item in log" :key="item.id">
       <div v-if="item.kind === 'user'" class="row user">
@@ -91,13 +101,13 @@
       </div>
 
       <div v-else-if="item.kind === 'agent'" class="row agent">
-        <div class="bubble">{{ item.text }}</div>
+        <div class="bubble"><template v-for="(line, i) in responseLines(item.text)" :key="i"><strong v-if="line.heading">{{ line.text }}</strong><span v-else>{{ line.text }}</span><br v-if="i < responseLines(item.text).length - 1" /></template></div>
       </div>
 
       <details v-else-if="item.kind === 'investigation' && item.tasks.length" class="prompt-box" open>
         <summary>조사 Task와 확인 정보</summary>
         <div v-for="task in item.tasks" :key="task.task_id" style="padding:10px 12px;border-top:1px solid #3a3a52">
-          <strong>{{ task.server_id }} · {{ task.goal }}</strong>
+          <strong>모니터링 서버 · {{ task.goal }}</strong>
           <div v-for="(status, id) in task.information_status" :key="id">
             {{ task.information_labels?.[id] || id }}: {{ statusLabel(status) }}
           </div>
@@ -119,10 +129,22 @@
 
       <div v-else-if="item.kind === 'evidence'">
         <details v-for="e in item.evidence" :key="e.evidence_id" class="prompt-box" style="margin:6px 0">
-          <summary>{{ e.evidence_id }} · {{ e.server_id }} · {{ e.command }} · 원문 근거</summary>
+          <summary>{{ e.evidence_id }} · 모니터링 서버 · {{ e.command }} · 원문 근거</summary>
           <pre>{{ JSON.stringify(e, null, 2) }}</pre>
         </details>
       </div>
+
+      <details v-else-if="item.kind === 'remediation'" class="prompt-box">
+        <summary>대처방안 출처와 적용 조건</summary>
+        <div v-for="step in item.data.steps" :key="step.action_id" style="padding:8px 12px">
+          <strong>{{ step.text }}</strong>
+          <div>{{ step.precondition }}</div>
+          <small>근거: {{ step.chunk_id }}</small>
+        </div>
+        <div v-for="source in item.data.sources" :key="source.chunk_id" style="padding:6px 12px">
+          {{ source.title }} · {{ source.section }}
+        </div>
+      </details>
 
       <details v-else-if="item.kind === 'prompt'" class="prompt-box">
         <summary>LLM에 전달된 최종 프롬프트 보기</summary>
@@ -134,9 +156,9 @@
     <input
       v-model="input"
       autocomplete="off"
-      placeholder="예: 서버 B가 느린데 원인을 확인해줘 / 서버 G 메모리 상태는 어때?"
+      placeholder="예: CPU 상태와 대처방안 알려줘 / 이전 근거로 다시 설명해줘"
     />
-    <button type="submit" :disabled="sending">보내기</button>
+    <button type="submit" :disabled="sending || !scenarioId">보내기</button>
   </form>
 </div>
 
@@ -144,13 +166,31 @@
 <script>
 const { createApp, ref, reactive, nextTick } = Vue;
 
+const responseLines = text => String(text).split('\n').map(line => {
+  const heading = /^\*\*([^*]{1,40})\*\*$/.exec(line);
+  return {heading: !!heading, text: heading ? heading[1] : line};
+});
+
 const STEP_LABELS = {
-  RequirementsIdentified: e => `조사 대상 확인: ${e.targets.join(', ')}`,
-  CommandSelected: e => `${e.server_id}: ${e.command} 선택 (${e.information_ids.join(', ')})`,
+  ManualSearchStarted: e => `${e.os} 공식 대처 매뉴얼 검색`,
+  ManualSearchCompleted: e => `관련 매뉴얼 ${e.chunks}개 구간 확인`,
+  ManualSearchReused: () => '확보한 매뉴얼 근거 재사용',
+  SpecialistDelegated: e => `${e.role === 'manual' ? '매뉴얼' : e.role === 'logs' ? '로그' : '메트릭'} 전문 에이전트에 조사 위임`,
+  WorkflowTimedOut: e => `요청 시간 제한 ${e.seconds}초 · 확보한 근거 반환 (미검증)`,
+  SpecialistFailed: e => `${e.role === 'manual' ? '매뉴얼' : e.role === 'logs' ? '로그' : '메트릭'} 전문 판단 실패 · 다른 역할의 결과 보존`,
+  SpecialistReused: e => `${e.role === 'manual' ? '매뉴얼' : e.role === 'logs' ? '로그' : '메트릭'} 전문 판단 재사용`,
+  SpecialistAssessed: e => e.role === 'manual' ? `매뉴얼 검토 · 근거 ${e.chunks ?? 0}개 · 조치 ${e.steps ?? 0}개` : `${e.role === 'logs' ? '로그' : '메트릭'} 증상 검토 · 추가 조사 ${e.additional_tasks ?? 0}건`,
+  SpecialistReturned: e => `${e.role === 'manual' ? '매뉴얼' : e.role === 'logs' ? '로그' : '메트릭'} 전문 판단 반환 (${e.status})`,
+  InvestigationCompleted: () => '조사 결과 정리 완료',
+  WorkflowCompleted: () => '전체 요청 검증·보완 종료',
+  WorkflowBudget: e => `명령 ${e.command_calls}/12건 · 매뉴얼 ${e.manual_searches}/2회 · 보완 ${e.repair_rounds}/2회`,
+  RemediationContextReused: () => '이 상태의 이전 조사 근거 재사용',
+  RequirementsIdentified: () => '선택 상태에서 필요한 서버 정보 확인',
+  CommandSelected: e => `${e.command} 선택 (${e.information_ids.join(', ')})`,
   FinalAnswerValidation: e => e.status === 'passed' ? '원래 요청에 대한 답변 충족 확인' : '최종 검토: 미충족·확인 불가 항목 확인',
   AnswerRepair: e => `부족한 정보·설명 보완 (${e.attempt}회)`,
   InvestigationReview: e => `결과 검토 후 추가 Task ${e.additional_task_count}개 계획`,
-  CommandCompleted: e => `${e.server_id}: ${e.command} 조회 완료 (종료 코드 ${e.exit_code})`,
+  CommandCompleted: e => `${e.command} 조회 완료 (종료 코드 ${e.exit_code})`,
   PlanCreated: e => `계획 수립: 할 일 ${e.task_count}가지${e.targets?.length ? ` (시스템: ${e.targets.join(', ')})` : ''}`,
   GateApplied: e => e.removed_analysis_tasks ? `불필요한 작업 ${e.removed_analysis_tasks}건 제거` : null,
   TaskCompleted: e => (e.source === 'monitoring'
@@ -159,7 +199,10 @@ const STEP_LABELS = {
   ReplanCheck: e => e.is_sufficient ? null : `정보 부족 → 장애유형 "${e.target}"로 추가 조사`,
   DraftWritten: e => `답변 초안 작성 (시도 ${e.attempt})`,
   Validation: e => e.verdict === '합격' ? '검수 통과' : '검수 반려 → 다시 작성',
-  Finalize: () => '최종 답변 완성',
+  Finalize: () => '조사·초안 정리 완료',
+  FinalResponseFormattingStarted: () => '요청 난이도에 맞춰 최종 답변 정리',
+  FinalResponseFormatted: e => e.style === 'brief' ? '간결한 답변 완성' : '항목별 설명과 최종 요약 완성',
+  FinalResponseFormatFailed: () => '최종 형식 정리 실패 — 검증된 기존 내용 표시',
 };
 
 createApp({
@@ -169,7 +212,12 @@ createApp({
     const input = ref('');
     const sending = ref(false);
     const logEl = ref(null);
-    const thread = 't-web-' + Math.random().toString(36).slice(2, 8);
+    const scenarioId=ref(''); const scenarios=ref([]); const scenarioError=ref('');
+    const newThread=()=> 't-web-' + crypto.randomUUID();
+    let thread=newThread();
+    function onScenarioChange() { thread=newThread(); log.value=[]; input.value=''; }
+    fetch('/monitoring/scenarios').then(r=>{if(!r.ok)throw new Error();return r.json();})
+      .then(rows=>{scenarios.value=rows;scenarioId.value=rows[0]?.scenario_id || '';}).catch(()=>{scenarioError.value='시나리오 목록을 불러오지 못했습니다.';});
     let nextId = 0;
     const statusLabel = status => ({pending:'미조회',obtained:'정보 확보',needs_more:'추가 확인 필요',failed:'조회 실패',unsupported:'미지원',information_ready:'정보 확보·답변 확인 대기',satisfied:'답변 충족'}[status] || status);
 
@@ -184,7 +232,7 @@ createApp({
 
     function onSubmit() {
       const text = input.value.trim();
-      if (!text) return;
+      if (!text || sending.value || !scenarioId.value) return;
 
       log.value.push({ id: nextId++, kind: 'user', text });
       input.value = '';
@@ -199,7 +247,7 @@ createApp({
       log.value.push(requirementsItem);
       scrollToBottom();
 
-      const url = `/chat/stream?message=${encodeURIComponent(text)}&thread_id=${encodeURIComponent(thread)}`;
+      const url = `/chat/stream?message=${encodeURIComponent(text)}&thread_id=${encodeURIComponent(thread)}&scenario_id=${encodeURIComponent(scenarioId.value)}`;
       const es = new EventSource(url);
       let streamItem = null;
       let streamAttempt = null;   // write_node 재작성(attempt 증가) 시 새 말풍선으로 끊는다
@@ -244,6 +292,7 @@ createApp({
             log.value.push(streamItem);
           }
           streamItem.text = e.reply;   // 토큰 합산 결과와 서버의 최종 텍스트를 일치시킨다
+          if (e.remediation?.status === 'provided') log.value.push({id:nextId++,kind:'remediation',data:e.remediation});
           if (e.tasks?.some(t => t.information_ids)) tasksItem.tasks = e.tasks;
           if (e.evidence?.length) log.value.push({ id: nextId++, kind: 'evidence', evidence: e.evidence });
           if (e.prompt) log.value.push({ id: nextId++, kind: 'prompt', text: e.prompt });
@@ -267,7 +316,7 @@ createApp({
       };
     }
 
-    return { backendLabel, log, input, sending, logEl, onSubmit, statusLabel };
+    return { backendLabel, log, input, sending, logEl, onSubmit, statusLabel, responseLines, scenarioId, scenarios, scenarioError, onScenarioChange };
   },
 }).mount('#app');
 </script>
