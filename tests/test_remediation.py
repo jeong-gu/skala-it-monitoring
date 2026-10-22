@@ -1894,6 +1894,24 @@ class ResourceDiagnosisGroundingTests(unittest.TestCase):
         self.assertIn("확정할 수 없습니다",a.text)
         self.assertTrue(a.symptom_observed)
 
+    def test_discarded_memory_ratio_prose_does_not_fail_grounded_observation(self):
+        from agent.investigation import ground_resource_assessment, verify_report
+        from agent.investigation_models import InvestigationReport
+        # Actual C history: a ratio in diagnostic prose was rejected before the
+        # prose could be replaced with raw fields. Ratios belong to calculations.
+        a,e,r=self.fixture("server-c","free",["memory.summary"],"현재 메모리 사용률은 93.75%입니다.")
+        ground_resource_assessment(a,e,r)
+        self.assertNotIn("93.75",a.text)
+        self.assertIn("7680",a.text)
+        self.assertIn("8192",a.text)
+        verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"symptom_observed","requirement_ids"})]),e)
+
+    def test_discarding_prose_does_not_authorize_invented_source_quotes(self):
+        from agent.investigation import ground_resource_assessment
+        a,e,r=self.fixture("server-c","free",["memory.summary"],"현재 메모리 사용률은 93.75%입니다.")
+        a.quotes.append("Mem: 8192 8000 0 0 0 0")
+        with self.assertRaises(ValueError):ground_resource_assessment(a,e,r)
+
     def test_missing_resource_citation_fails_without_substituting_another_source(self):
         from agent.investigation import ground_resource_assessment
         a,e,r=self.fixture("server-b","top",["cpu"],"CPU가 높습니다.")

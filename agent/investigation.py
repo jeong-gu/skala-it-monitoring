@@ -240,7 +240,12 @@ def ground_resource_assessment(assessment, evidence, requirements):
     topics = {i for r in assigned for i in r["information_ids"]}
     if (not assigned or not topics or not topics <= resource_ids or not assessment.symptom_observed
             or len({sid for r in assigned for sid in r["server_ids"]}) != 1):return
-    verify_report(InvestigationReport(hypotheses=[assessment.model_dump(exclude={"symptom_observed", "requirement_ids"})]), evidence)
+    # This free-form observation is replaced below, so it must not fail on
+    # model-computed ratios that never reach the answer. Validate its sources
+    # first, then validate the canonical raw-field text in the normal caller.
+    source_claim = assessment.model_dump(exclude={"symptom_observed", "requirement_ids"})
+    source_claim["text"] = "인용된 원문 관측을 확인했습니다."
+    verify_report(InvestigationReport(hypotheses=[source_claim]), evidence)
     required = {(sid, i) for r in assigned for sid in r["server_ids"] for i in r["information_ids"]}
     covered, summaries = set(), []
     for source in evidence:
