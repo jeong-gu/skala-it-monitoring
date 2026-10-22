@@ -47,7 +47,7 @@ INSTRUCTIONS = {
 - "서버 조회 없이 CPU·메모리 조회 방법을 설명해줘." → false, chat. 조회 도구 사용법은 일반 설명이며 해결 매뉴얼 RAG 대상이 아니다. 공식 조사 방법 문서를 요구해도 해결 절차 문서로 대체했다고 주장하지 마라. 현재 RAG 자료는 문제의 완화·해결 절차만 제공한다.
 - 이전 메모리 관측 뒤 "그 상태에서 어떻게 대응해야 해? 새로 조회하지는 마." → true, investigate_remediate, reuse, 메모리 remediation과 기존 관측 재사용. 조회 금지는 매뉴얼 검색 금지가 아니다.
 request_quote는 가능한 한 해당 kind에 해당하는 절만 인용한다. "CPU 상태를 확인하고 대처법을 알려줘"를 lookup으로 인용할 때는 "CPU 상태를 확인하고"만, remediation에는 "대처법을 알려줘"를 선택한다. 긴 전체 문장을 각 요구의 description으로 반복하지 않는다.
-인용은 문장 재작성이 아니라 원문에서 연속된 부분을 복사하는 것이다. 여러 주제가 마지막 서술어를 공유해도 중간 단어를 생략하고 서술어를 붙이거나 조사를 바꾸지 않는다. 완성된 문장일 필요 없이 주제와 요구를 나타내는 짧은 부분 구간이면 된다. 예를 들어 "디스크 사용량과 네트워크 연결을 알려줘"는 "디스크 사용량"과 "네트워크 연결"을 각각 인용한다. "디스크 사용량을 알려줘"는 원문에 없는 문장이므로 인용하지 않는다. kind와 information_ids는 전체 원문 의미로 결정한다.""",
+인용은 문장 재작성이 아니라 원문에서 연속된 부분을 복사하는 것이다. 여러 주제가 마지막 서술어를 공유해도 중간 단어를 생략하고 서술어를 붙이거나 조사를 바꾸지 않는다. 완성된 문장일 필요 없이 주제와 요구를 나타내는 짧은 부분 구간이면 된다. 예를 들어 "디스크 사용량과 네트워크 연결을 알려줘"는 "디스크 사용량"과 "네트워크 연결"을 각각 인용한다. "디스크 사용량을 알려줘"는 원문에 없는 문장이므로 인용하지 않는다. kind와 information_ids는 전체 원문 의미로 결정한다. CPU·메모리 점유의 원인 후보를 프로세스와 함께 요청하면 diagnosis의 정보 ID에 원래 CPU·메모리 주제를 유지한다. process는 점유 기여를 확인할 근거이며 원래 자원 주제를 대신하지 않는다. 예: 메모리 사용 비율과 점유 프로세스를 확인하고 원인 후보 설명 → calculation(memory.summary), lookup(process), diagnosis(memory.summary). process 자체의 생성·부모 관계를 묻는 경우에는 process 주제를 유지한다.""",
     "direct": """도구가 필요 없는 질문에 한국어로 답하라. JSON만 반환한다.
 간단한 task는 style=brief, brief에 1~2줄로 간결하게 답한다. sections와 summary는 비운다.
 복잡한 설명은 style=detailed, sections를 배경·원리·근거 등 필요한 항목으로 나누고 summary에 마지막 요약 3~4줄을 쓴다. brief는 비운다.
@@ -379,6 +379,15 @@ async def request_route(state, deps, legacy_systems):
                     and subjects and decision.observation_policy != "clarify"):
                 decision.requested_information_ids=list(subjects)
                 decision.requested_results.insert(0, RequestedResult(description="상태 확인 후 대처 판단에 필요한 관측",kind="lookup",information_ids=list(subjects)))
+            # An already complete three-metric lookup needs no scope expansion.
+            # Normalize only the default/presentation flag, not the selected intent.
+            snapshot = {"cpu", "memory.summary", "disk"}
+            if (decision.basic_status and snapshot <= explicit_information_scope(query) <= snapshot | {"memory.detail"}
+                    and set(decision.requested_information_ids) == snapshot
+                    and {i for r in decision.requested_results for i in r.information_ids} == snapshot
+                    and all(r.kind == "lookup" for r in decision.requested_results)
+                    and not manual_results and not subjects and not decision.unsupported_manual_topics):
+                decision.basic_status = False
             if decision.basic_status:
                 if manual_results or any(r.kind not in {"lookup","explanation"} for r in decision.requested_results):
                     raise ValueError("기본 상태 스냅샷과 복잡한 결과 요구가 모순됩니다. 원래 요청의 범위를 다시 분류하세요.")

@@ -236,7 +236,7 @@ def cause_catalog(evidence, requirements):
 def ground_resource_assessment(assessment, evidence, requirements):
     """Render resource observations separately from source-bound causal candidates."""
     assigned = [r for r in requirements if r["requirement_id"] in assessment.requirement_ids]
-    resource_ids = {"cpu", "memory.summary", "memory.detail"}
+    resource_ids = {"cpu", "memory.summary", "memory.detail", "process"}
     topics = {i for r in assigned for i in r["information_ids"]}
     if (not assigned or not topics or not topics <= resource_ids or not assessment.symptom_observed
             or len({sid for r in assigned for sid in r["server_ids"]}) != 1):return
@@ -250,11 +250,16 @@ def ground_resource_assessment(assessment, evidence, requirements):
             if key not in required:continue
             lines = fact["quote"].splitlines()
             if not any(line in quote for quote in assessment.quotes for line in lines):continue
-            assessment.quotes = list(dict.fromkeys([*assessment.quotes, *lines]))
+            selected_lines = [line for line in lines if any(line in quote for quote in assessment.quotes)]
+            assessment.quotes = list(dict.fromkeys([*assessment.quotes, *(selected_lines if fact["information_id"] == "process" else lines)]))
             covered.add(key)
-            if fact["summary"] not in summaries:summaries.append(fact["summary"])
+            # Process rows are already rendered in the factual evidence block.
+            # Keep this bounded assessment factual without repeating every row.
+            summary = ("인용한 프로세스 행에서 CPU·메모리 점유와 RSS를 확인했습니다."
+                       if fact["information_id"] == "process" else fact["summary"])
+            if summary not in summaries:summaries.append(summary)
     if covered != required:
-        raise ValueError("CPU·메모리 판단에는 배정된 정보의 원문 행을 빠짐없이 인용하세요.")
+        raise ValueError("자원·프로세스 판단에는 배정된 정보의 원문 행을 빠짐없이 인용하세요.")
     assessment.text = " ".join(summaries) + " 단일 표본으로 원인을 확정할 수 없습니다."
     if topics & {"memory.summary", "memory.detail"} and any(
             e.get("os") == "macos" and e["evidence_id"] in assessment.evidence_ids for e in evidence):
@@ -485,6 +490,7 @@ async def investigate(state, deps):
     planner = getattr(deps, "monitoring_llm", None) or deps.fast_llm
     events = list(state.get("events", []))
     evidence, tasks, limitations, hypotheses = [], [], [], []
+    report_failure_notes = {}
     ledger = RequestLedger()
     answers, calculations, final_reviews = [], [], []
     diagnosis_assessments = None  # None preserves legacy injected writer contracts.
@@ -622,6 +628,13 @@ async def investigate(state, deps):
             factors = [c for c in payload["cause_catalog"]
                        if any(rid in diagnosis_ids and (repair_ids is None or rid in repair_ids)
                               for rid in c["requirement_ids"])]
+            if specialist_assessments is not None:
+                eligible = {(c["requirement_id"], c["factor_id"]) for c in payload["eligible_cause_choices"]}
+                factors = [{**c, "requirement_ids":[rid for rid in c["requirement_ids"] if (rid, c["factor_id"]) in eligible]}
+                           for c in factors]
+                factors = [c for c in factors if c["requirement_ids"]]
+            schema["properties"]["causes"]["maxItems"] = min(8, len({
+                (rid, c["server_id"], c["kind"]) for c in factors for rid in c["requirement_ids"]}))
             if factors:
                 properties = schema["$defs"]["CauseSelection"]["properties"]
                 properties["factor_id"]["enum"] = [c["factor_id"] for c in factors]
@@ -1037,7 +1050,7 @@ async def investigate(state, deps):
             def monitoring_json(self, purpose, payload, schema):
                 return deps.quality_llm.diagnostic_json(payload, schema)
         async def decide(role, requirements, observations, allowed):
-            payload = {"role": role, "target_os":{sid:server_map[sid]["os"] for sid in targets}, "requirements": [{**{k:r[k] for k in ("requirement_id", "description", "server_ids", "information_ids")},
+            payload = {"role": role, "original_query": query, "target_os":{sid:server_map[sid]["os"] for sid in targets}, "requirements": [{**{k:r[k] for k in ("requirement_id", "description", "server_ids", "information_ids")},
                     **{k:r[k] for k in ("supporting_for", "supporting_server_ids") if k in r}} for r in requirements],
                        "targets": targets, "allowed_information_ids": allowed,
                        "read_only_information_ids":sorted(diagnostic_scope(role, requirements)[1]),
@@ -1396,10 +1409,29 @@ async def investigate(state, deps):
             answer_updates = [a.model_dump() for a in report.answers]
             answers = merge_verified_results(answers,answer_updates,
                 {rid for a in answer_updates for rid in a["requirement_ids"]} if repair_ids is None else repair_ids)
+            completed_ids = (repair_ids if repair_ids is not None else
+                             {r["requirement_id"] for r in ledger.requirements if r["kind"] != "remediation"})
+            # A partial compose may already have preserved a valid sibling.
+            # The prior full-answer review, after programmatic downgrades,
+            # identifies those siblings; do not keep blaming them after repair.
+            if final_reviews:
+                completed_ids = completed_ids | {c["requirement_id"] for c in final_reviews[-1]["checks"]
+                    if c["status"] == "satisfied" and c["requirement_id"] not in specialist_failures}
+            for note, affected in list(report_failure_notes.items()):
+                remaining = affected - completed_ids
+                if remaining:
+                    report_failure_notes[note] = remaining
+                else:
+                    report_failure_notes.pop(note)
+                    if note in limitations:limitations.remove(note)
             save_progress({"answers":answers, "hypotheses":hypotheses, "calculation_results":calculations, **ledger.payload()})
         except ValueError as exc:
-            ledger.note("answer_generation", str(exc))
-            limitations.append(f"원인 후보 해석 검증 실패: {exc}. 관측 사실만 제공합니다.")
+            affected = (repair_ids if repair_ids is not None else
+                        {r["requirement_id"] for r in ledger.requirements if r["kind"] != "remediation"})
+            ledger.note("answer_generation", str(exc), sorted(affected))
+            note = f"답변 일부의 근거 검증 실패: {exc}. 확보한 결과와 미충족 요구를 함께 표시합니다."
+            report_failure_notes.setdefault(note, set()).update(affected)
+            if note not in limitations:limitations.append(note)
 
     def draft(include_requirement_notes=True):
         # Rebuild notes after repair, including newly failed commands and unsupported fields.

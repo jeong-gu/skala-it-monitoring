@@ -1851,6 +1851,7 @@ class DiagnosticAssignmentContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(received)
         payload,schema=received[0]
         self.assertEqual(payload["target_os"],{"server-a":"linux"})
+        self.assertEqual(payload["original_query"],"CPU가 높으면 원인 설명")
         self.assertEqual(schema["properties"]["diagnoses"]["maxItems"],1)
         self.assertEqual(next(iter(schema["properties"])),"tasks")
         self.assertEqual(payload["requirements"][0]["information_ids"],["cpu"])
@@ -1916,6 +1917,28 @@ class ResourceDiagnosisGroundingTests(unittest.TestCase):
         self.assertIn("e2",candidate.evidence_ids)
         a.symptom_observed=False
         with self.assertRaises(ValueError):bind_cause(selection,e,r,[a.model_dump()])
+
+    def test_mixed_resource_process_observation_cannot_deny_quoted_process(self):
+        from agent.investigation import ground_resource_assessment, verify_report
+        from agent.investigation_models import InvestigationReport, DiagnosisAssessment
+        from monitoring.api import ScenarioStore, CommandRequest
+        from monitoring.evidence import extract_facts
+        a,e,r=self.fixture("server-f","top",["cpu","process"],"CPU 사용률은 96%이며 프로세스 정보는 없습니다.")
+        p=ScenarioStore().result(CommandRequest(server_id="server-f",command="ps")).model_dump(mode="json")
+        p.update(evidence_id="e2",facts=extract_facts(p));e.append(p)
+        a.evidence_ids.append("e2")
+        a.quotes.append(p["facts"][0]["quote"].splitlines()[0])
+        ground_resource_assessment(a,e,r)
+        self.assertNotIn("정보는 없습니다",a.text)
+        self.assertIn("프로세스",a.text)
+        self.assertIn("96.0%",a.text)
+        DiagnosisAssessment.model_validate(a.model_dump())
+        verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"symptom_observed","requirement_ids"})]),e)
+
+    def test_mixed_resource_process_requires_actual_process_quote(self):
+        from agent.investigation import ground_resource_assessment
+        a,e,r=self.fixture("server-f","top",["cpu","process"],"현재 CPU 사용률은 96%입니다.")
+        with self.assertRaises(ValueError):ground_resource_assessment(a,e,r)
 
     def test_mixed_log_or_disk_assessment_is_not_replaced(self):
         from agent.investigation import ground_resource_assessment

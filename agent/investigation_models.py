@@ -59,6 +59,7 @@ class DiagnosticDecision(BaseModel):
 
 
 DIAGNOSTIC_INSTRUCTIONS = """너는 배정된 영역의 증상 확인 전문 에이전트다. 제한된 관측만 검토해 JSON으로 답한다.
+original_query는 사용자의 전체 요청이다. 각 requirement의 짧은 description에 생략된 주제·조건은 전체 요청에서 확인하되, 배정된 information_ids 범위를 지켜라. 메모리 사용량과 점유 원인 요청을 메모리 압박 발생 여부로 바꿔 평가하지 마라.
 작업은 원인 추측이나 대처방안 작성이 아니라, 요청한 증상이 현재 표본에 나타나는지 판단하고 부족한 정보만 요청하는 것이다.
 먼저 tasks에 필요한 추가 관측을 결정하고, diagnoses에 배정된 요구별 판단을 기록한다. CPU·메모리 증상이 있는데 process 근거가 없으면 process task를 빠뜨리지 마라.
 requirements에 배정된 정보만 판단한다. 동일 requirement_id는 전체 diagnoses에서 한 번만 사용한다. CPU 요구에 top의 부수적 메모리 사실이 있더라도 메모리 진단을 추가하지 마라. target_os의 실제 OS를 사용하고, Linux에 macOS 한계 문장을 적용하지 마라.

@@ -68,6 +68,30 @@ class CompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.mcp.calls),1);self.assertIn(text["text"],r["final"])
         self.assertEqual(r["final_validation"]["repair_rounds"],1)
 
+    async def test_successful_report_repair_clears_only_active_failure_note(self):
+        answer=dict(text="현재 시스템 CPU 사용률은 19%입니다",requirement_ids=["r1"],evidence_ids=["e1"],quotes=["16.0 us"])
+        result=await self.run_flow([req("cpu",kind="explanation")],
+            Model(final_review=[review(chk("r1","unmet")),review(chk("r1"))]),
+            writer=Model(report=["invalid json","invalid json",dict(hypotheses=[],answers=[answer])]))
+        self.assertEqual(result["final_validation"]["status"],"passed")
+        self.assertNotIn("검증 실패",result["final"])
+        self.assertTrue(any(i["stage"]=="answer_generation" for i in result["requirement_issues"]))
+        self.assertTrue(any("프로세스 CPU와 다름" in note for note in result["limitations"]))
+
+    async def test_report_repair_clears_failure_scope_of_already_valid_sibling(self):
+        bad=dict(text="현재 시스템 CPU 사용률은 999%입니다",requirement_ids=["r1"],evidence_ids=["e1"],quotes=["16.0 us"])
+        sibling=dict(text="사용 메모리는 3072 MiB입니다",requirement_ids=["r2"],evidence_ids=["e1"],quotes=["3072.0 used"])
+        repaired=dict(bad,text="현재 시스템 CPU 사용률은 19%입니다")
+        initial=dict(hypotheses=[],answers=[bad,sibling])
+        result=await self.run_flow([req("cpu",kind="explanation"),req("memory.summary",kind="explanation")],
+            Model(final_review=[review(chk("r1","unmet"),chk("r2")),review(chk("r1"),chk("r2"))]),
+            tasks=[task("server-a","cpu","memory.summary")],
+            writer=Model(report=[initial,initial,dict(hypotheses=[],answers=[repaired])]))
+        self.assertEqual(result["final_validation"]["status"],"passed")
+        self.assertNotIn("검증 실패",result["final"])
+        self.assertIn(sibling["text"],result["final"])
+        self.assertTrue(any(i["stage"]=="answer_generation" for i in result["requirement_issues"]))
+
     async def test_program_rejects_false_calculation_pass_then_computes_from_source(self):
         calc=dict(label="원본 필드 계산",requirement_ids=["r1"],operation="sum",
                   operands=[dict(evidence_id="e1",information_id="cpu",field="user_percent")],output_unit="native")
@@ -1058,6 +1082,17 @@ class CausalSelectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(eligible_cause_choices(evidence,requirements,invalid),[])
         changed=[dict(e,server_id="other-server") if e["command_id"]=="ps" else e for e in evidence]
         self.assertEqual(eligible_cause_choices(changed,requirements,assessment),[])
+
+    async def test_cause_schema_limits_each_requested_factor_kind_to_one(self):
+        class BoundedWriter(Model):
+            def monitoring_json(self, purpose, payload, schema):
+                if purpose == "report":
+                    self.cause_limit = schema["properties"]["causes"]["maxItems"]
+                return super().monitoring_json(purpose, payload, schema)
+        assessment=dict(text="현재 시스템 CPU 사용률은 19%입니다",requirement_ids=["r1"],evidence_ids=["e1"],quote_ids=["e1:l3"],symptom_observed=True)
+        writer=BoundedWriter(report=[dict(diagnoses=[assessment],hypotheses=[],causes=[dict(requirement_id="r1",factor_id="e2:process:0:cpu")])])
+        await self.run_flow([req("cpu",kind="diagnosis")],Model(final_review=[review(chk("r1"))]),writer=writer,tasks=[task("server-a","cpu","process")])
+        self.assertEqual(writer.cause_limit,1)
 
     async def test_redundant_process_candidates_retry_to_one_primary_factor(self):
         assessment=dict(text="현재 시스템 CPU 사용률은 19%입니다",requirement_ids=["r1"],evidence_ids=["e1"],quote_ids=["e1:l3"],symptom_observed=True)

@@ -840,6 +840,33 @@ class TypedIntentReconciliationTests(unittest.IsolatedAsyncioTestCase):
         return await request_route(dict(query='구조화된 모델 계약 재현',scenario_id='server-g',scenario_os='macos',
             single_server_mode=True,history=[],events=[]),deps(RejectMCP(),Chosen('test',0)),[])
 
+    async def test_explicit_complete_snapshot_does_not_retry_a_default_flag(self):
+        from agent.response_policy import request_route
+        query = "현재 CPU·메모리·디스크 상태를 보여줘."
+        d = intent_payload(route="commands", style="brief", reason="기본 상태 조회", basic_status=True,
+            requested_information_ids=["cpu", "memory.summary", "disk"], requested_results=[dict(
+                request_quote=query, description=query, kind="lookup", information_ids=["cpu", "memory.summary", "disk"])])
+        d["manual_requested"] = False
+        model = FailedResponseCostTests.Paid([json.dumps(d), json.dumps(d)])
+        result = await request_route(dict(query=query, scenario_id="server-e", single_server_mode=True,
+            scenario_os="macos", events=[]), deps(RejectMCP(), model), set())
+        self.assertEqual(result["route"], "commands")
+        self.assertEqual(model.calls, 1)
+        self.assertFalse(result["request_decision"]["basic_status"])
+        self.assertEqual(result["request_decision"]["requested_information_ids"], ["cpu", "memory.summary", "disk"])
+        self.assertEqual(result["request_decision"]["manual_information_ids"], [])
+
+    async def test_snapshot_flag_cannot_expand_an_explicit_memory_only_request(self):
+        from agent.response_policy import request_route
+        query = "RAM 상태를 보여줘."
+        d = intent_payload(route="commands", style="brief", reason="잘못된 전체 상태", basic_status=True,
+            requested_information_ids=["cpu", "memory.summary", "disk"], requested_results=[dict(
+                request_quote=query, description=query, kind="lookup", information_ids=["cpu", "memory.summary", "disk"])])
+        model = FailedResponseCostTests.Paid([json.dumps(d), json.dumps(d)])
+        result = await request_route(dict(query=query, scenario_id="server-e", single_server_mode=True,
+            events=[]), deps(RejectMCP(), model), set())
+        self.assertEqual(result["route"], "chat")
+
     async def test_basic_scope_is_consistent_in_both_information_lists(self):
         d=intent_payload(route='commands',style='brief',reason='기본 상태',basic_status=True,
             requested_information_ids=['cpu','memory.summary','disk','system','network'])
