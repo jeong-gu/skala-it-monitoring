@@ -11,7 +11,10 @@ from pydantic import ValidationError
 
 from monitoring.api import CommandResult
 from monitoring.evidence import extract_facts, causal_factors
-from .investigation_models import AnswerReview, InvestigationReport, TaskPlan, TaskSpec, DiagnosticDecision, DiagnosisAssessment, Hypothesis, CauseSelection
+from .investigation_models import (
+    AnswerReview, InvestigationReport, TaskPlan, TaskSpec, DiagnosticDecision,
+    DiagnosisAssessment, Hypothesis, CauseSelection, build_investigation_schema,
+)
 from .request_ledger import RequestLedger, RequirementSpec
 from .answer_calculations import calculate, CalculationRejected
 from .answer_contracts import AnswerStatement
@@ -560,106 +563,12 @@ async def investigate(state, deps):
         if state.get("single_server_mode"):
             payload["observation_context"]={"source":"fixture", "current_scope":"selected_saved_state",
                                             "live_measurement_supported":False}
-        schema = contract.model_json_schema()
-        if contract is TaskPlan:
-            spec = schema["$defs"]["TaskSpec"]["properties"]
-            spec["server_id"]["enum"] = payload["targets"]
-            spec["information_ids"]["items"]["enum"] = [i["information_id"] for i in payload["information"]] + [
-                "history", "deployment", "network.performance"]
-        if contract is DiagnosticDecision:
-            # At most one assessment per assigned requirement. Incidental fields
-            # in a shared command must not create another symptom assessment.
-            schema["properties"]["diagnoses"]["maxItems"]=min(8,len(payload["requirements"]))
-            props=schema["properties"]
-            schema["properties"]={"tasks":props["tasks"],"diagnoses":props["diagnoses"]}
-            spec = schema["$defs"]["TaskSpec"]["properties"]
-            spec["server_id"]["enum"] = payload["targets"]
-            spec["information_ids"]["items"]["enum"] = payload["allowed_information_ids"]
-            source = schema["$defs"]["DiagnosisAssessment"]
-            source["properties"].pop("quotes")
-            source["properties"]["quote_ids"].update(minItems=1)
-            if payload["quote_catalog"]:
-                source["properties"]["quote_ids"]["items"]["enum"] = [q["quote_id"] for q in payload["quote_catalog"]]
-            source["properties"]["requirement_ids"]["items"]["enum"] = [r["requirement_id"] for r in payload["requirements"]]
-            if payload["observations"]:
-                source["properties"]["evidence_ids"]["items"]["enum"] = [e["evidence_id"] for e in payload["observations"]]
-            if not payload["observations"]:schema["properties"]["diagnoses"]["maxItems"]=0
-        if contract is AnswerReview:
-            # Audit the user's unparsed request before grading the existing list;
-            # grading first can anchor the model on an incomplete contract.
-            props=schema["properties"]
-            schema["properties"]={k:props[k] for k in ("missing_requirements","checks","repair_tasks","rewrite_instructions")}
-            # The validator judges answer adequacy only; capability state belongs to code.
-            schema["$defs"]["RequirementCheck"]["properties"]["status"]["enum"] = ["satisfied", "unmet"]
-            if not ledger.calculation_rejections:
-                schema["$defs"]["RequirementCheck"]["properties"].pop("rejection_matches_request",None)
-            if lookup_scope:
-                for name in ("TaskSpec", "RequirementSpec"):
-                    schema["$defs"][name]["properties"]["information_ids"]["items"]["enum"] = sorted(lookup_scope)
-            if payload["targets"]:
-                schema["$defs"]["TaskSpec"]["properties"]["server_id"]["enum"]=payload["targets"]
-                schema["$defs"]["RequirementSpec"]["properties"]["server_ids"]["items"]["enum"]=payload["targets"]
-            else:
-                # A generic OS manual has no server target; never invent one for repair.
-                schema["properties"]["repair_tasks"]["maxItems"]=0
-                schema["$defs"]["RequirementSpec"]["properties"]["server_ids"]["maxItems"]=0
-        if contract is InvestigationReport:
-            kinds=[r["kind"] for r in ledger.requirements if r["kind"]!="remediation"]
-            diagnosis_ids = [r["requirement_id"] for r in ledger.requirements if r["kind"] == "diagnosis"]
-            schema["properties"]["hypotheses"]["maxItems"]=min(8, len(diagnosis_ids))
-            schema["properties"]["diagnoses"]["maxItems"]=0 if specialist_assessments is not None else min(8, len(diagnosis_ids))
-            if specialist_assessments is not None:
-                supported = {rid for a in specialist_assessments if a["symptom_observed"] for rid in a["requirement_ids"]}
-                schema["properties"]["hypotheses"]["maxItems"] = len(supported)
-            if diagnosis_ids:
-                schema["properties"]["diagnoses"]["minItems"]=0 if specialist_assessments is not None else 1
-                ref = schema["$defs"]["DiagnosisAssessment"]["properties"]["requirement_ids"]
-                ref["items"]["enum"]=diagnosis_ids
-            if diagnosis_ids:
-                ref = schema["$defs"]["Hypothesis"]["properties"]["requirement_ids"]
-                ref.update(minItems=1)
-                ref["items"]["enum"] = diagnosis_ids
-            schema["properties"]["calculations"]["maxItems"]=min(8,sum(k in {"calculation","comparison"} for k in kinds))
-            pending = pending_calculation_ids()
-            if pending:
-                schema["properties"]["calculations"]["minItems"] = 1
-                payload["required_calculation_ids"] = pending
-                payload["calculation_instruction"] = "이 요구들은 원본 정보가 확보됐습니다. calculations에 연산·원본 필드·요구 ID를 연결하세요. 원본 용량을 answers에 반복하는 것으로 계산 결과를 대신하지 마세요."
-            answer_ids = [r["requirement_id"] for r in ledger.requirements if r["kind"] != "remediation"
-                          and (specialist_assessments is None or r["kind"] != "diagnosis")]
-            repair_ids = payload.get("repair_requirement_ids")
-            if repair_ids is not None:
-                answer_ids = [rid for rid in answer_ids if rid in repair_ids]
-            factors = [c for c in payload["cause_catalog"]
-                       if any(rid in diagnosis_ids and (repair_ids is None or rid in repair_ids)
-                              for rid in c["requirement_ids"])]
-            if specialist_assessments is not None:
-                eligible = {(c["requirement_id"], c["factor_id"]) for c in payload["eligible_cause_choices"]}
-                factors = [{**c, "requirement_ids":[rid for rid in c["requirement_ids"] if (rid, c["factor_id"]) in eligible]}
-                           for c in factors]
-                factors = [c for c in factors if c["requirement_ids"]]
-            schema["properties"]["causes"]["maxItems"] = min(8, len({
-                (rid, c["server_id"], c["kind"]) for c in factors for rid in c["requirement_ids"]}))
-            if factors:
-                properties = schema["$defs"]["CauseSelection"]["properties"]
-                properties["factor_id"]["enum"] = [c["factor_id"] for c in factors]
-                properties["requirement_id"]["enum"] = sorted({rid for c in factors for rid in c["requirement_ids"]
-                    if rid in diagnosis_ids and (repair_ids is None or rid in repair_ids)})
-            else:
-                schema["properties"]["causes"]["maxItems"] = 0
-            schema["properties"]["answers"]["maxItems"]=min(8,len(answer_ids))
-            if answer_ids:
-                schema["$defs"]["AnswerStatement"]["properties"]["requirement_ids"]["items"]["enum"] = answer_ids
-            quote_ids=[q["quote_id"] for q in payload["quote_catalog"]]
-            ids=[e["evidence_id"] for e in payload["evidence"]]
-            for name in ("Hypothesis","AnswerStatement","DiagnosisAssessment"):
-                definition=schema["$defs"][name]
-                properties=definition["properties"]
-                properties.pop("quotes")  # Legacy callers can still supply exact text.
-                properties["quote_ids"].update(minItems=1)
-                properties["quote_ids"]["items"]["enum"]=quote_ids
-                definition["required"]=[k for k in definition["required"] if k!="quotes"]+["quote_ids"]
-                properties["evidence_ids"]["items"]["enum"]=ids
+        schema = build_investigation_schema(
+            contract, payload, requirements=ledger.requirements,
+            calculation_rejections=ledger.calculation_rejections,
+            lookup_scope=lookup_scope, specialist_assessments=specialist_assessments,
+            pending_calculation_ids=pending_calculation_ids,
+        )
         for attempt in range(2):
             tick=perf_counter()
             try:

@@ -1375,3 +1375,96 @@ class MetricValueBindingTests(unittest.TestCase):
             with self.subTest(text=text):self.verify(text)
         sources=self.sources();sources[0]['facts'][0]['fields']['usage_percent']=40
         with self.assertRaises(ValueError):self.verify('시스템 CPU 사용률은 40%입니다.',sources=sources)
+
+
+class InvestigationSchemaTests(unittest.TestCase):
+    """Model contracts retain scope and source limits across request types."""
+
+    def setUp(self):
+        from agent.investigation_models import build_investigation_schema
+        self.build = build_investigation_schema
+        self.context = dict(requirements=[], calculation_rejections=[], lookup_scope=set(),
+                            specialist_assessments=None, pending_calculation_ids=lambda: [])
+
+    def test_task_plan_limits_registered_scope_without_changing_base_contract(self):
+        from agent.investigation_models import TaskPlan
+        original = TaskPlan.model_json_schema()
+        payload = {"targets": ["server-b"], "information": [{"information_id": "cpu"}]}
+        before = copy.deepcopy(payload)
+        schema = self.build(TaskPlan, payload, **self.context)
+        props = schema["$defs"]["TaskSpec"]["properties"]
+        self.assertEqual(props["server_id"]["enum"], ["server-b"])
+        self.assertEqual(props["information_ids"]["items"]["enum"],
+                         ["cpu", "history", "deployment", "network.performance"])
+        self.assertEqual(payload, before)
+        self.assertEqual(TaskPlan.model_json_schema(), original)
+
+    def test_diagnostic_contract_requires_sources_and_disallows_unobserved_diagnoses(self):
+        from agent.investigation_models import DiagnosticDecision
+        payload = dict(targets=["server-b"], requirements=[{"requirement_id": "r1"}],
+                       allowed_information_ids=["process"], quote_catalog=[{"quote_id": "e1:l1"}],
+                       observations=[{"evidence_id": "e1"}])
+        schema = self.build(DiagnosticDecision, payload, **self.context)
+        self.assertEqual(list(schema["properties"]), ["tasks", "diagnoses"])
+        props = schema["$defs"]["DiagnosisAssessment"]["properties"]
+        self.assertNotIn("quotes", props)
+        self.assertEqual(props["quote_ids"]["items"]["enum"], ["e1:l1"])
+        self.assertEqual(props["evidence_ids"]["items"]["enum"], ["e1"])
+        self.assertEqual(schema["properties"]["diagnoses"]["maxItems"], 1)
+        payload["observations"] = []
+        self.assertEqual(self.build(DiagnosticDecision, payload, **self.context)
+                         ["properties"]["diagnoses"]["maxItems"], 0)
+
+    def test_generic_manual_review_cannot_invent_server_or_query(self):
+        from agent.investigation_models import AnswerReview
+        schema = self.build(AnswerReview, {"targets": []}, **self.context)
+        self.assertEqual(list(schema["properties"]),
+                         ["missing_requirements", "checks", "repair_tasks", "rewrite_instructions"])
+        self.assertEqual(schema["properties"]["repair_tasks"]["maxItems"], 0)
+        self.assertEqual(schema["$defs"]["RequirementSpec"]["properties"]["server_ids"]["maxItems"], 0)
+        props = schema["$defs"]["RequirementCheck"]["properties"]
+        self.assertEqual(props["status"]["enum"], ["satisfied", "unmet"])
+        self.assertNotIn("rejection_matches_request", props)
+
+    def test_review_preserves_rejection_checks_and_narrow_lookup_scope(self):
+        from agent.investigation_models import AnswerReview
+        self.context.update(calculation_rejections=[{"requirement_id": "r1"}],
+                            lookup_scope={"memory.summary", "cpu"})
+        schema = self.build(AnswerReview, {"targets": ["server-c"]}, **self.context)
+        for name in ("TaskSpec", "RequirementSpec"):
+            self.assertEqual(schema["$defs"][name]["properties"]["information_ids"]["items"]["enum"],
+                             ["cpu", "memory.summary"])
+        self.assertIn("rejection_matches_request", schema["$defs"]["RequirementCheck"]["properties"])
+
+    def test_report_repairs_only_eligible_causes_and_keeps_specialist_ownership(self):
+        from agent.investigation_models import InvestigationReport
+        self.context.update(requirements=[{"requirement_id": "r1", "kind": "diagnosis"},
+                                          {"requirement_id": "r2", "kind": "lookup"}],
+                            specialist_assessments=[{"symptom_observed": True, "requirement_ids": ["r1"]}])
+        payload = dict(cause_catalog=[dict(factor_id=f, requirement_ids=["r1"],
+                       server_id="server-c", kind="process") for f in ("p1", "p2")],
+                       eligible_cause_choices=[{"requirement_id": "r1", "factor_id": "p2"}],
+                       quote_catalog=[{"quote_id": "e1:l1"}], evidence=[{"evidence_id": "e1"}])
+        schema = self.build(InvestigationReport, payload, **self.context)
+        self.assertEqual(schema["properties"]["diagnoses"]["maxItems"], 0)
+        self.assertEqual(schema["properties"]["causes"]["maxItems"], 1)
+        self.assertEqual(schema["$defs"]["CauseSelection"]["properties"]["factor_id"]["enum"], ["p2"])
+        self.assertEqual(schema["$defs"]["AnswerStatement"]["properties"]["requirement_ids"]["items"]["enum"], ["r2"])
+        payload["repair_requirement_ids"] = ["r2"]
+        self.assertEqual(self.build(InvestigationReport, payload, **self.context)
+                         ["properties"]["causes"]["maxItems"], 0)
+
+    def test_ready_calculation_annotation_is_report_only_and_evaluated_once(self):
+        from unittest.mock import Mock
+        from agent.investigation_models import TaskPlan, InvestigationReport
+        pending = Mock(return_value=["r1"])
+        self.context.update(requirements=[{"requirement_id": "r1", "kind": "calculation"}],
+                            pending_calculation_ids=pending)
+        self.build(TaskPlan, {"targets": [], "information": []}, **self.context)
+        pending.assert_not_called()
+        payload = dict(cause_catalog=[], quote_catalog=[], evidence=[])
+        schema = self.build(InvestigationReport, payload, **self.context)
+        pending.assert_called_once_with()
+        self.assertEqual(payload["required_calculation_ids"], ["r1"])
+        self.assertEqual(schema["properties"]["calculations"]["minItems"], 1)
+        self.assertIn("calculation_instruction", payload)
