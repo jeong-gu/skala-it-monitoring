@@ -1310,6 +1310,14 @@ class MetricValueBindingTests(unittest.TestCase):
                      'CPU 시스템 비율은 16%입니다.']:
             with self.subTest(text=text),self.assertRaises(ValueError):self.verify(text,calculated=[40])
 
+    def test_cpu_subfield_before_metric_name_is_not_total_usage(self):
+        for text in ['사용자 CPU 사용률이 16%입니다.', '커널 CPU 사용률은 2%입니다.',
+                     '유휴 CPU 비율은 82%입니다.', 'user CPU usage is 16%.']:
+            with self.subTest(text=text):self.verify(text)
+        for text in ['사용자 CPU 사용률이 18%입니다.', '커널 CPU 사용률은 16%입니다.',
+                     '전체 CPU 사용률은 16%입니다.']:
+            with self.subTest(text=text),self.assertRaises(ValueError):self.verify(text)
+
     def test_process_identity_and_metric_are_bound_together(self):
         for text in ['alpha 프로세스 CPU 사용률은 18%입니다.',
                      'alpha 메모리 점유율은 8%입니다.', 'alpha가 메모리 8%를 점유합니다.',

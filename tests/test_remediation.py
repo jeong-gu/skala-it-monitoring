@@ -1856,3 +1856,94 @@ class DiagnosticAssignmentContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["requirements"][0]["information_ids"],["cpu"])
         self.assertEqual(mcp.calls,[("server-a","top")])
         self.assertFalse(any(e["type"]=="SpecialistFailed" for e in result["events"]))
+
+
+class ResourceDiagnosisGroundingTests(unittest.TestCase):
+    def fixture(self, server, command, info, text, observed=True):
+        from monitoring.api import ScenarioStore, CommandRequest
+        from monitoring.evidence import extract_facts
+        from agent.investigation_models import DiagnosisAssessment
+        evidence=ScenarioStore().result(CommandRequest(server_id=server,command=command)).model_dump(mode="json")
+        evidence["evidence_id"]="e1"
+        evidence["facts"]=extract_facts(evidence)
+        facts=[f for f in extract_facts(evidence) if f["information_id"] in info]
+        assessment=DiagnosisAssessment(text=text,requirement_ids=["r1"],evidence_ids=["e1"],
+            quotes=[line for f in facts for line in f["quote"].splitlines()],symptom_observed=observed)
+        requirement=dict(requirement_id="r1",kind="diagnosis",server_ids=[server],information_ids=info)
+        return assessment,[evidence],[requirement]
+
+    def test_cpu_observation_cannot_assert_process_causality(self):
+        from agent.investigation import ground_resource_assessment, verify_report
+        from agent.investigation_models import InvestigationReport
+        a,e,r=self.fixture("server-b","top",["cpu"],"높은 CPU 사용률 때문에 시스템 과부하가 발생했습니다.")
+        ground_resource_assessment(a,e,r)
+        self.assertIn("96.0%",a.text)
+        self.assertNotIn("batch-worker",a.text)
+        self.assertIn("확정할 수 없습니다",a.text)
+        self.assertTrue(a.symptom_observed)
+        verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"symptom_observed","requirement_ids"})]),e)
+
+    def test_linux_memory_observation_cannot_assert_pressure_or_oom(self):
+        from agent.investigation import ground_resource_assessment
+        a,e,r=self.fixture("server-c","free",["memory.summary"],"메모리 압박이 관측되며 OOM이 임박했습니다.")
+        ground_resource_assessment(a,e,r)
+        self.assertIn("7680",a.text)
+        self.assertNotIn("임박",a.text)
+        self.assertNotIn("압박이 관측",a.text)
+        self.assertIn("확정할 수 없습니다",a.text)
+        self.assertTrue(a.symptom_observed)
+
+    def test_missing_resource_citation_fails_without_substituting_another_source(self):
+        from agent.investigation import ground_resource_assessment
+        a,e,r=self.fixture("server-b","top",["cpu"],"CPU가 높습니다.")
+        a.quotes=[]
+        with self.assertRaises(ValueError):ground_resource_assessment(a,e,r)
+
+    def test_mac_usage_contributor_does_not_require_proven_pressure(self):
+        from agent.investigation import ground_resource_assessment, cause_catalog, bind_cause
+        from agent.investigation_models import CauseSelection
+        from monitoring.api import ScenarioStore, CommandRequest
+        from monitoring.evidence import extract_facts
+        a,e,r=self.fixture("server-g","top",["memory.summary"],"물리 메모리 사용량을 관측했습니다.")
+        ground_resource_assessment(a,e,r)
+        self.assertIn("압박 여부를 확정할 수 없습니다",a.text)
+        p=ScenarioStore().result(CommandRequest(server_id="server-g",command="ps")).model_dump(mode="json")
+        p.update(evidence_id="e2",facts=extract_facts(p));e.append(p)
+        factor=next(f for f in cause_catalog(e,r) if f["kind"]=="process_memory")
+        selection=CauseSelection(requirement_id="r1",factor_id=factor["factor_id"])
+        candidate=bind_cause(selection,e,r,[a.model_dump()])
+        self.assertIn("후보",candidate.text)
+        self.assertIn("e2",candidate.evidence_ids)
+        a.symptom_observed=False
+        with self.assertRaises(ValueError):bind_cause(selection,e,r,[a.model_dump()])
+
+    def test_mixed_log_or_disk_assessment_is_not_replaced(self):
+        from agent.investigation import ground_resource_assessment
+        a,e,r=self.fixture("server-b","top",["cpu","log.content"],"로그와 CPU를 함께 판단합니다.")
+        ground_resource_assessment(a,e,r)
+        self.assertEqual(a.text,"로그와 CPU를 함께 판단합니다.")
+
+    def test_multi_target_assessment_retains_existing_contract(self):
+        from agent.investigation import ground_resource_assessment
+        a,e,r=self.fixture("server-b","top",["cpu"],"여러 대상의 원문을 비교합니다.")
+        r[0]["server_ids"].append("server-c")
+        ground_resource_assessment(a,e,r)
+        self.assertEqual(a.text,"여러 대상의 원문을 비교합니다.")
+
+    def test_single_host_all_resource_fields_fit_statement_contract(self):
+        from agent.investigation import ground_resource_assessment, verify_report
+        from agent.investigation_models import InvestigationReport, DiagnosisAssessment
+        from monitoring.api import ScenarioStore, CommandRequest
+        from monitoring.evidence import extract_facts
+        for sid in ("server-a","server-c","server-e","server-g"):
+            with self.subTest(sid=sid):
+                evidence=[];quotes=[]
+                for index,command in enumerate(("top","free") if sid in ("server-a","server-c") else ("top","vm_stat")):
+                    source=ScenarioStore().result(CommandRequest(server_id=sid,command=command)).model_dump(mode="json")
+                    source.update(evidence_id=f"e{index}",facts=extract_facts(source));evidence.append(source)
+                    quotes += [line for f in source["facts"] for line in f["quote"].splitlines()]
+                a=DiagnosisAssessment(text="원문 수치를 확인했습니다.",requirement_ids=["r1"],evidence_ids=[e["evidence_id"] for e in evidence],quotes=list(dict.fromkeys(quotes)),symptom_observed=True)
+                r=[dict(requirement_id="r1",server_ids=[sid],information_ids=["cpu","memory.summary","memory.detail"])]
+                ground_resource_assessment(a,evidence,r)
+                DiagnosisAssessment.model_validate(a.model_dump())
+                verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"symptom_observed","requirement_ids"})]),evidence)

@@ -26,7 +26,7 @@ INSTRUCTIONS = {
 8. information_catalog의 의미를 따른다. log.files는 파일명·크기·수정 시각, log.usage는 저장량, log.content는 메시지·오류·발생 시각이다. network는 소켓·포트·연결 상태이며 외부 서비스 응답시간이나 정상 응답을 입증하지 못한다. 조회와 확인 한계를 함께 묻는 경우 lookup과 explanation을 보존한다.
 9. 명시한 지표만 선택한다. CPU만 요청했으면 memory나 disk를 더하지 않는다. RAM은 memory.summary다. OS 자체를 물은 경우만 system을 선택한다. 진단에 필요한 추가 근거는 이후 조사 단계가 선택한다.
 10. 지표·명령을 지정하지 않은 기본 상태/사용량 요청만 basic_status=true, requested_information_ids=[cpu,memory.summary,disk], style=brief다. 개별 지표·계산·원인·재사용 요청은 basic_status=false다.
-11. 사용 메모리 비율은 원본 used/total×100 계산이다. free/available과 used를 바꾸지 않는다. CPU 사용률은 이미 제공된 비율이므로 단독 조회는 lookup이다. needs_calculation은 calculation/comparison, needs_diagnosis는 diagnosis, needs_explanation은 explanation kind와 일치시킨다.
+11. 사용자가 % 기호나 전체라는 말을 생략해도 물리 메모리의 사용 비율·점유율을 물으면 memory.summary의 calculation 요구다. 용량 lookup이나 diagnosis에 합치지 않는다. 예: "메모리 사용 비율을 확인하고 높은 경우 원인 설명"은 calculation(memory.summary)과 diagnosis(memory.summary)다. 사용 메모리 비율은 원본 used/total×100 계산이다. free/available과 used를 바꾸지 않는다. CPU 사용률은 이미 제공된 비율이므로 단독 조회는 lookup이다. needs_calculation은 calculation/comparison, needs_diagnosis는 diagnosis, needs_explanation은 explanation kind와 일치시킨다.
 12. observation_policy는 auto(기본), refresh(새 측정), reuse(기존 관측만 사용·조회 금지), clarify(현재 질의만으로 판단 불가)다. '아직 조회 안 했으니 새로 측정'은 refresh이며 과거형 미조회 설명은 금지가 아니다. 현재의 '조회하지 말고/확인하지 마/측정 없이'는 reuse다. 과거 턴의 금지는 현재의 새 측정을 막지 않는다.
 13. continue_previous_task는 새 지표나 새 목적 없이 이전 관측 결과만 재설명할 때 true다. commands+reuse를 쓰며 이전 대처 재설명이면 investigate_remediate+reuse다. 이전 요청·정보·대처 범위를 유지한다. previous_is_latest_topic=false인 단순 '다시 설명'은 최근 개념 대화의 chat이며 오래된 관측을 되살리지 않는다.
 14. 공식 매뉴얼 지원은 CPU·메모리·디스크다. DB 교착·네트워크 장애·인증서 등 범위 밖의 대처 주제는 unsupported_manual_topics에 원래 표현으로 남긴다. 복합 요청의 미지원 항목을 지원 항목으로 바꾸거나 누락하지 않는다.
@@ -175,6 +175,10 @@ def reference_only_request(query: str) -> bool:
     return bool(re.fullmatch(r"(?:(?:그|해당)(?:서버|시나리오)의?|(?:새로|다시)?(?:확인|조회|조사|측정)하지(?:말고|마)|(?:기존|이전)(?:의)?(?:결과|관측|근거)(?:만)?(?:으로|로|을|를)?(?:사용해서|활용해서|사용해|사용)?|다시|한번더|좀|(?:설명|요약|정리)(?:해줘|해주세요|해줄래|부탁해))+$",compact))
 
 
+class AmbiguousManualIntent(ValueError):
+    """Conflicting action intent cannot be repaired into permission to search."""
+
+
 class ResponseModelFailure(ValueError):
     """Known usage survives invalid output and a subsequent provider failure."""
     def __init__(self, cost_usd, model_calls):
@@ -279,12 +283,14 @@ async def model_json(model, purpose, payload, contract, check=None):
                 if manual_requested is not None:
                     manual=any(r.get("kind")=="remediation" for r in results) or bool(data.get("manual_information_ids") or data.get("unsupported_manual_topics"))
                     if manual_requested != manual and not data.get("continue_previous_task"):
-                        raise ValueError("manual_requested와 대처 계약이 모순됩니다. 조회·원인·한계 설명만 요청했으면 대처 계약과 manual_information_ids는 비우세요. 실제 조치 요청이면 해당 요구를 보존하세요.")
+                        raise AmbiguousManualIntent("대처 요청 여부와 대처 계약이 모순되어 의도를 확인할 수 없습니다.")
                 parsed = contract.model_validate(data)
             else:parsed = contract.model_validate_json(raw)
             if check: check(parsed)
             return parsed, cost, attempt + 1
         except (ValueError, TypeError) as exc:
+            if isinstance(exc, AmbiguousManualIntent):
+                raise ResponseModelFailure(cost, attempt + 1) from exc
             if purpose == "intent" and isinstance(exc, SourceQuoteError):
                 choices = source_quote_choices(data, payload)
                 if choices:

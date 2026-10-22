@@ -233,6 +233,34 @@ def cause_catalog(evidence, requirements):
     return catalog
 
 
+def ground_resource_assessment(assessment, evidence, requirements):
+    """Render resource observations separately from source-bound causal candidates."""
+    assigned = [r for r in requirements if r["requirement_id"] in assessment.requirement_ids]
+    resource_ids = {"cpu", "memory.summary", "memory.detail"}
+    topics = {i for r in assigned for i in r["information_ids"]}
+    if (not assigned or not topics or not topics <= resource_ids or not assessment.symptom_observed
+            or len({sid for r in assigned for sid in r["server_ids"]}) != 1):return
+    verify_report(InvestigationReport(hypotheses=[assessment.model_dump(exclude={"symptom_observed", "requirement_ids"})]), evidence)
+    required = {(sid, i) for r in assigned for sid in r["server_ids"] for i in r["information_ids"]}
+    covered, summaries = set(), []
+    for source in evidence:
+        if source.get("error") or source["evidence_id"] not in assessment.evidence_ids:continue
+        for fact in extract_facts(source):
+            key = (source["server_id"], fact["information_id"])
+            if key not in required:continue
+            lines = fact["quote"].splitlines()
+            if not any(line in quote for quote in assessment.quotes for line in lines):continue
+            assessment.quotes = list(dict.fromkeys([*assessment.quotes, *lines]))
+            covered.add(key)
+            if fact["summary"] not in summaries:summaries.append(fact["summary"])
+    if covered != required:
+        raise ValueError("CPU·메모리 판단에는 배정된 정보의 원문 행을 빠짐없이 인용하세요.")
+    assessment.text = " ".join(summaries) + " 단일 표본으로 원인을 확정할 수 없습니다."
+    if topics & {"memory.summary", "memory.detail"} and any(
+            e.get("os") == "macos" and e["evidence_id"] in assessment.evidence_ids for e in evidence):
+        assessment.text += " macOS의 사용·미사용 메모리와 페이지 통계만으로 메모리 압박 여부를 확정할 수 없습니다."
+
+
 def ground_disk_absence(assessment, evidence, requirements):
     """Ground a typed disk-absence verdict; do not infer negation from prose."""
     if assessment.symptom_observed:return
@@ -1042,6 +1070,7 @@ async def investigate(state, deps):
                 for a in decision.diagnoses:
                     try:
                         bind_report_sources(InvestigationReport(diagnoses=[a], hypotheses=[]), observations)
+                        ground_resource_assessment(a, observations, requirements)
                         ground_disk_absence(a, observations, requirements)
                         ground_storage_support(a, observations, requirements)
                         verify_report(InvestigationReport(hypotheses=[a.model_dump(exclude={"symptom_observed", "requirement_ids"})]), observations)
@@ -1210,6 +1239,7 @@ async def investigate(state, deps):
                         bind_report_sources(InvestigationReport(diagnoses=[assessment],hypotheses=[]),evidence)
                         # Specialist assessments were already checked in their actual role scope.
                         if specialist_assessments is None:
+                            ground_resource_assessment(assessment, evidence, ledger.requirements)
                             ground_disk_absence(assessment, evidence, ledger.requirements)
                     except ValueError as exc:
                         item_errors.append(str(exc))
@@ -1514,10 +1544,12 @@ async def investigate(state, deps):
                 # is audit data, not a fresh deficit to repeat after a repair.
                 "requirements": [{**{k:r[k] for k in ("requirement_id", "description", "server_ids", "information_ids", "kind", "status", "action_condition")},
                     "evaluation_focus": (
-                        "관측값과 증상 미관측 사실, 판단 한계를 설명했는지 확인. 조건이 성립하지 않는 원인 후보를 새로 요구하지 않음."
+                        "원래 질문의 조사 목적과 미관측 판정이 같은지 먼저 확인. 조건부 질문의 전제가 미관측이면 값과 한계 설명으로 충족할 수 있다. 압박 미확인은 메모리 점유 원인 질문의 생략 근거가 아니며, 별도로 요청한 후보가 없으면 unmet이다."
                         if r["kind"] == "diagnosis" and diagnosis_assessments and
                            any(r["requirement_id"] in a["requirement_ids"] for a in diagnosis_assessments) and
                            all(not a["symptom_observed"] for a in diagnosis_assessments if r["requirement_id"] in a["requirement_ids"])
+                        else "관측에 연결된 원인 후보와 확인 한계가 본문에 있는지 판단. 조건부 기여 후보는 허용하며 확정 원인이나 후보 수 증가를 요구하지 않는다. unmet이면 이미 있는 후보와 다른 구체적 누락을 지목한다."
+                        if r["kind"] == "diagnosis"
                         else "일반 매뉴얼·예방 절차 요청이다. 해당 OS·주제의 공식 단계, 적용 전 조건, 출처가 본문에 있는지 검토한다. 서버 관측이나 조치 생략 설명은 요구하지 않는다."
                         if r["kind"] == "remediation" and r["action_condition"] == "always"
                         else "조건부 조치 요청이다. 관측 조건이 성립하면 공식 단계·조건·출처를, 성립하지 않으면 원문 관측과 조치 생략 설명을 확인한다. 두 답변을 동시에 요구하지 않는다."

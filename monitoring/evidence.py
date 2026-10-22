@@ -215,6 +215,12 @@ def verify_metric_values(text, evidence):
         value=Decimal(match['value'] or match['percent']);unit=match['unit'] or '%'
         desc=descriptor.search(prefix)
         desc=desc[1].lower() if desc else ''
+        # A subfield can precede CPU ("사용자 CPU 사용률") as well as
+        # follow it ("CPU 사용자 비율"). "시스템 CPU" still means total
+        # host usage; only the explicit "CPU 시스템 비율" means kernel time.
+        if kind == 'cpu' and desc in {'', '사용'}:
+            before = re.search(r'(?<![A-Za-z가-힣])(사용자|커널|유휴|user|idle)\s*$', prefix[:label.start()], re.I)
+            if before:desc=before[1].lower()
         named=[]
         for source,row in process_rows:
             positions=[m.start() for m in re.finditer(r'(?<![A-Za-z0-9_.-])'+re.escape(row['name'])+r'(?![A-Za-z0-9_.-])',prefix)]

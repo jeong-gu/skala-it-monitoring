@@ -813,6 +813,24 @@ class TypedIntentReconciliationTests(unittest.IsolatedAsyncioTestCase):
         actions=[x for x in r['request_decision']['requested_results'] if x['kind']=='remediation']
         self.assertEqual([x['information_ids'] for x in actions],[['cpu'],['disk']])
 
+    async def test_conflicting_manual_intent_does_not_retry_into_search_permission(self):
+        from agent.response_policy import request_route
+        class Conflict(QualityLLM):
+            calls=0
+            def response_json(self,purpose,payload,schema):
+                self.calls+=1
+                return json.dumps(intent_payload(route='investigate_remediate',style='detailed',reason='모순',
+                    manual_requested=self.calls>1,requested_information_ids=['cpu'],manual_information_ids=['cpu'],
+                    requested_results=[dict(description='CPU 확인',kind='lookup',information_ids=['cpu']),
+                        dict(description='CPU 대처',kind='remediation',information_ids=['cpu'],action_condition='if_needed')])),{'usd':.001}
+        model=Conflict('test',0)
+        result=await request_route(dict(query='CPU 원인과 확인 한계를 설명해줘',scenario_id='server-b',
+            single_server_mode=True,history=[],events=[]),deps(RejectMCP(),model),[])
+        self.assertEqual(model.calls,1)
+        self.assertEqual(result['route'],'chat')
+        self.assertIn('요청 의도',result['direct_response_override'])
+        self.assertEqual(result['cost_usd'],.001)
+
     async def route(self,decision):
         from agent.response_policy import request_route
         class Chosen(QualityLLM):
